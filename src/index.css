@@ -1,0 +1,7 @@
+﻿:root { font-family: 'Trebuchet MS', 'Segoe UI', sans-serif; color: #303d38; background: #faf9f5; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button:focus-visible { outline: 3px solid #7856a4; outline-offset: 4px; }
+button:disabled { cursor: default; }
+h1, h2, h3, p { margin: 0; }

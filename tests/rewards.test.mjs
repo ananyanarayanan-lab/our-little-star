@@ -1,0 +1,87 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { migrateRewards, saveReward, archiveReward, selectGoal, redeemReward } from '../src/rewards.js'
+import { readProgress, migrateLegacy, saveMission, awardMission, undoCompletion, storageKey, missionStorageKey } from '../src/progress.js'
+import { nameKey, rewardKey } from '../src/settings.js'
+const setup = (balance = 12) => saveReward({ ...migrateRewards(migrateLegacy(null), null), balance }, { name: '  Toy  ', cost: 5 }, 'toy')
+const confirm = (state, id = 'request') => ({ id, rewardId: 'toy', name: 'Toy', cost: 5, balance: state.balance })
+
+test('reward creation validates name/cost and supports multiple rewards without auto selection', () => {
+  for (const cost of [0, -1, 1.5, NaN, Infinity]) assert.throws(() => saveReward(setup(), { name: 'Bad', cost }))
+  assert.throws(() => saveReward(setup(), { name: ' ', cost: 1 }))
+  const state = saveReward(setup(), { name: 'Story', cost: 1 }, 'story')
+  assert.equal(state.rewards.length, 2)
+  assert.equal(state.rewards[0].name, 'Toy')
+  assert.equal(state.selectedRewardId, null)
+})
+test('goal selection/confirmation preparation never spends; confirmation keeps leftover stars', () => {
+  const state = selectGoal(setup(), 'toy')
+  const confirmation = confirm(state)
+  assert.equal(state.balance, 12)
+  assert.equal(state.redemptions.length, 0)
+  const next = redeemReward(state, confirmation, '2026-09-19T12:00:00Z')
+  assert.equal(next.balance, 7)
+  assert.equal(next.selectedRewardId, 'toy')
+  assert.equal(next.redemptions[0].timestamp, '2026-09-19T12:00:00Z')
+})
+test('any available reward can be redeemed, including non-selected; exact balance reaches zero', () => {
+  const state = saveReward(setup(5), { name: 'Story', cost: 2 }, 'story')
+  assert.equal(redeemReward(selectGoal(state, 'story'), confirm(state)).balance, 0)
+})
+test('insufficient balance and stale confirmation are rejected without mutation', () => {
+  const state = setup(4)
+  assert.throws(() => redeemReward(state, confirm(state)), /Not enough/)
+  assert.equal(state.balance, 4)
+  assert.equal(state.redemptions.length, 0)
+  const funded = setup()
+  assert.throws(() => redeemReward({ ...funded, balance: 11 }, confirm(funded)), /changed/)
+  assert.throws(() => redeemReward(saveReward(funded, { name: 'Toy', cost: 6 }, 'toy'), confirm(funded)), /changed/)
+})
+test('duplicate submission and retry after reload deduct once', () => {
+  const state = setup()
+  const confirmation = confirm(state)
+  const next = redeemReward(state, confirmation)
+  const storage = { getItem: key => key === storageKey ? JSON.stringify(next) : null }
+  const retried = redeemReward(readProgress(storage), confirmation)
+  assert.equal(retried.balance, 7)
+  assert.equal(retried.redemptions.length, 1)
+})
+test('editing and archiving preserve snapshots; archiving selected goal clears it', () => {
+  const state = selectGoal(setup(), 'toy')
+  const spent = redeemReward(state, confirm(state), '2026-09-19T12:00:00Z')
+  const edited = saveReward(spent, { name: 'Bigger toy', cost: 9 }, 'toy')
+  const archived = archiveReward(edited, 'toy')
+  assert.equal(archived.selectedRewardId, null)
+  assert.deepEqual(archived.redemptions, spent.redemptions)
+  assert.equal(archived.redemptions[0].name, 'Toy')
+  assert.equal(archived.redemptions[0].cost, 5)
+  assert.throws(() => selectGoal(archived, 'toy'))
+  assert.throws(() => redeemReward(archived, { ...confirm(archived), id: 'new' }), /available/)
+  assert.equal(archiveReward(archived, 'toy', false).selectedRewardId, null)
+})
+test('v2 migration preserves reward, child key, balance, edited missions and history without altering source keys', () => {
+  let old = saveMission(migrateLegacy(null), { name: 'Help', stars: 10, emoji: '⭐', frequency: 'repeatable' }, 'help')
+  old = awardMission(old, 'help', old.day, 'earned')
+  const data = new Map([[missionStorageKey, JSON.stringify(old)], [rewardKey, JSON.stringify({ name: 'Toy', cost: 5 })], [nameKey, 'Sally']])
+  const before = [...data.entries()]
+  const migrated = readProgress({ getItem: key => data.get(key) ?? null })
+  assert.equal(migrated.balance, 10)
+  assert.deepEqual(migrated.missions, old.missions)
+  assert.deepEqual(migrated.completions, old.completions)
+  assert.equal(migrated.rewards[0].name, 'Toy')
+  assert.equal(migrated.selectedRewardId, 'legacy-reward')
+  assert.deepEqual([...data.entries()], before)
+  data.set(storageKey, JSON.stringify(archiveReward(migrated, 'legacy-reward')))
+  assert.equal(readProgress({ getItem: key => data.get(key) ?? null }).selectedRewardId, null)
+})
+test('undo after spending rejects negative balance; sufficient remaining balance removes original amount', () => {
+  let state = saveMission(setup(0), { name: 'Help', stars: 10, emoji: '⭐', frequency: 'repeatable' }, 'help')
+  state = awardMission(state, 'help', state.day, 'first')
+  state = redeemReward(state, confirm(state))
+  assert.throws(() => undoCompletion(state, 'first'), /after spending/)
+  assert.equal(state.balance, 5)
+  assert.equal(state.completions[0].undone, false)
+  state = awardMission(state, 'help', state.day, 'second')
+  state = saveMission(state, { name: 'Help', stars: 100, emoji: '⭐', frequency: 'repeatable' }, 'help')
+  assert.equal(undoCompletion(state, 'first').balance, 5)
+})
