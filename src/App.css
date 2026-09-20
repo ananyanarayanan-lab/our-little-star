@@ -197,6 +197,11 @@ footer p { font-size: 10px; margin-top: 5px; }
 .invitation-link { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e4e7df; }
 .invitation-link label { display: block; font-size: 13px; font-weight: 700; }
 .invitation-link .edit-button { margin-top: 10px; }
+.family-picker-list { display: grid; gap: 12px; margin-top: 20px; }
+.family-choice { width: 100%; text-align: left; cursor: pointer; color: #303d38; }
+.family-choice strong, .family-choice span { display: block; }
+.family-choice span { margin-top: 5px; color: #66716a; font-size: 13px; }
+.family-choice:hover { background: #edf3e9; border-color: #b7c9ae; }
 .sync-indicator { color: #42623b !important; font-weight: 700; }
 .history-page .history { max-height: none; }
 .reward-library { margin-top: 22px; }

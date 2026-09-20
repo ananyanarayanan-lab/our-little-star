@@ -101,7 +101,7 @@ function InviteParent({ client, familyId }) {
       setMessage('Invitation link created.')
     } catch (problem) { setError(problem.message) } finally { setBusy(false) }
   }
-  return <article className="settings-card"><h3>Invite another parent</h3><p>Ask the other parent for their Parent ID. They must have their own signed-in account.</p><form className="settings-form" onSubmit={invite}><label htmlFor="invited-parent-id">Other parent’s Parent ID</label><input id="invited-parent-id" value={parentId} onChange={(event) => setParentId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" /><button className="complete-button" disabled={busy}>{busy ? 'Creating link…' : 'Create invitation link'}</button></form>{error && <p className="form-error" role="alert">{error}</p>}{link && <div className="invitation-link"><label htmlFor="invitation-link">Invitation link</label><input id="invitation-link" value={link} readOnly /><button className="edit-button" onClick={() => copyText(link).then(() => setMessage('Invitation link copied.')).catch((problem) => setError(problem.message))}>Copy link</button><p className="field-hint">The invited parent signs into their own account first, then opens this link.</p></div>}{message && <p className="announcement" role="status">{message}</p>}</article>
+  return <article className="settings-card"><h3>Invite another parent</h3><p>Ask the other parent for their Parent ID. They must have their own signed-in account.</p><form className="settings-form" onSubmit={invite}><label htmlFor="invited-parent-id">Other parent’s Parent ID</label><input id="invited-parent-id" value={parentId} onChange={(event) => setParentId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" /><button className="complete-button" disabled={busy}>{busy ? 'Creating link…' : 'Create invitation link'}</button></form>{error && <p className="form-error" role="alert">{error}</p>}{link && <div className="invitation-link"><label htmlFor="invitation-link">Invitation link</label><input id="invitation-link" value={link} readOnly /><button className="edit-button" onClick={() => copyText(link).then(() => setMessage('Invitation link copied.')).catch((problem) => setError(problem.message))}>Copy link</button><p className="field-hint">Create the link from the deployed Pages site, not localhost. The invited parent signs into their own account first, then opens it.</p></div>}{message && <p className="announcement" role="status">{message}</p>}</article>
 }
 
 function Settings({ family, user, membership, client, onSignOut }) {
@@ -122,27 +122,43 @@ function InvitationAcceptance({ client, invitationId, onAccepted, onDismiss }) {
   }
   return <section className="shared-panel onboarding-panel" aria-labelledby="accept-invitation-title"><p className="eyebrow">FAMILY INVITATION</p><h2 id="accept-invitation-title">Join this family?</h2><p className="section-description">You are signed in. Accepting adds this account as a parent in the invited family.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="edit-button" disabled={busy} onClick={onDismiss}>Not now</button><button className="manage-button" disabled={busy} onClick={accept}>{busy ? 'Joining…' : 'Accept invitation'}</button></div></section>
 }
+
+function FamilyPicker({ client, memberships, onChoose }) {
+  const [families, setFamilies] = useState([]); const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    Promise.all(memberships.map(async (membership) => {
+      const response = await client.from('families').select('id, name').eq('id', membership.family_id).single()
+      return { ...membership, family: unwrap(response) }
+    })).then((items) => { if (active) setFamilies(items) }).catch((problem) => { if (active) setError('Your families could not be loaded: ' + problem.message) })
+    return () => { active = false }
+  }, [client, memberships])
+  return <section className="shared-panel onboarding-panel" aria-labelledby="family-picker-title"><p className="eyebrow">OUR LITTLE STAR</p><h2 id="family-picker-title">Choose a family</h2><p className="section-description">This account belongs to more than one family. Choose the one you want to use now.</p>{error && <p className="form-error" role="alert">{error}</p>}{!families.length && !error ? <p role="status">Loading families…</p> : <div className="family-picker-list">{families.map((membership) => <button className="settings-card family-choice" key={membership.family_id} onClick={() => onChoose(membership.family_id)}><strong>{membership.family.name}</strong><span>{membership.role === 'owner' ? 'Owner' : 'Parent'}</span></button>)}</div>}</section>
+}
 export default function SharedFamilyData({ client, user, onSignOut }) {
-  const [state, setState] = useState({ status: 'loading', data: null, error: '' }); const [notice, setNotice] = useState(''); const [a11yNotice, setA11yNotice] = useState(''); const [pending, setPending] = useState(false); const [online, setOnline] = useState(() => navigator.onLine); const [selectedChildId, setSelectedChildId] = useState(''); const [page, setPage] = useState('today'); const [invitationId, setInvitationId] = useState(() => invitationIdFromSearch(window.location.search) ?? new URLSearchParams(window.location.search).get('invite'))
-  const load = useCallback(async (showLoading = true) => {
+  const [state, setState] = useState({ status: 'loading', data: null, error: '' }); const [notice, setNotice] = useState(''); const [a11yNotice, setA11yNotice] = useState(''); const [pending, setPending] = useState(false); const [online, setOnline] = useState(() => navigator.onLine); const [selectedChildId, setSelectedChildId] = useState(''); const [selectedFamilyId, setSelectedFamilyId] = useState(''); const [page, setPage] = useState('today'); const [invitationId, setInvitationId] = useState(() => invitationIdFromSearch(window.location.search) ?? new URLSearchParams(window.location.search).get('invite'))
+  const load = useCallback(async (showLoading = true, requestedFamilyId = selectedFamilyId) => {
     if (showLoading) setState({ status: 'loading', data: null, error: '' })
     try {
       const memberships = unwrap(await client.from('family_memberships').select('family_id, role, joined_at').order('joined_at'))
       if (!memberships.length) { setState({ status: 'onboarding', data: null, error: '' }); return }
-      if (memberships.length !== 1) { setState({ status: 'error', data: null, error: 'This account has more than one family. Family switching is not available, so no shared family was selected.' }); return }
-      const id = memberships[0].family_id
+      if (memberships.length > 1 && !requestedFamilyId) { setState({ status: 'choose-family', data: { memberships }, error: '' }); return }
+      const membership = memberships.find((item) => item.family_id === requestedFamilyId) || memberships[0]
+      if (!membership) { setState({ status: 'error', data: null, error: 'The selected family is unavailable.' }); return }
+      const id = membership.family_id
       const responses = await Promise.all([client.from('families').select('id, name, time_zone').eq('id', id).single(), client.from('children').select('id, name, selected_reward_id, archived_at').eq('family_id', id).order('created_at'), client.from('missions').select('id, name, emoji, stars, frequency, archived_at').eq('family_id', id).order('created_at'), client.from('rewards').select('id, name, star_cost, archived_at').eq('family_id', id).order('created_at'), client.from('mission_completions').select('id, child_id, mission_id, completed_at, completed_on, mission_name_snapshot, emoji_snapshot, stars_earned, undone_at').eq('family_id', id).order('completed_at', { ascending: false }), client.from('reward_redemptions').select('id, child_id, redeemed_at, reward_name_snapshot, stars_spent').eq('family_id', id).order('redeemed_at', { ascending: false }), client.from('child_star_balances').select('child_id, balance').eq('family_id', id)])
-      setState({ status: 'ready', error: '', data: { client, membership: memberships[0], family: unwrap(responses[0]), children: unwrap(responses[1]), missions: unwrap(responses[2]), rewards: unwrap(responses[3]), completions: unwrap(responses[4]), redemptions: unwrap(responses[5]), balances: unwrap(responses[6]) } })
+      setState({ status: 'ready', error: '', data: { client, membership, family: unwrap(responses[0]), children: unwrap(responses[1]), missions: unwrap(responses[2]), rewards: unwrap(responses[3]), completions: unwrap(responses[4]), redemptions: unwrap(responses[5]), balances: unwrap(responses[6]) } })
     } catch (problem) { setState({ status: 'error', data: null, error: 'Family data could not be loaded: ' + problem.message }) }
-  }, [client])
+  }, [client, selectedFamilyId])
   useEffect(() => { const timer = window.setTimeout(() => { void load(false) }, 0); return () => window.clearTimeout(timer) }, [load])
   useEffect(() => { const update = () => setOnline(navigator.onLine); window.addEventListener('online', update); window.addEventListener('offline', update); return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) } }, [])
   async function mutate(key, action, success, after, announceOnly = false) { if (pending) return; if (!online) { setState((current) => ({ ...current, error: 'You appear to be offline. Reconnect and try again.' })); return } setPending(true); setNotice(''); setA11yNotice(''); try { await action(); await load(false); if (announceOnly) setA11yNotice(success); else setNotice(success); after?.() } catch (problem) { setState((current) => ({ ...current, error: problem.message })) } finally { setPending(false) } }
   function dismissInvitation() { window.history.replaceState({}, '', window.location.pathname); setInvitationId(null) }
-  function invitationAccepted() { dismissInvitation(); setPage('today'); void load() }
+  function invitationAccepted() { dismissInvitation(); setSelectedFamilyId(''); setPage('today'); void load() }
   if (invitationId) return <InvitationAcceptance client={client} invitationId={invitationId} onDismiss={dismissInvitation} onAccepted={invitationAccepted} />
   if (state.status === 'loading') return <section className="shared-panel" aria-live="polite"><p className="eyebrow">OUR LITTLE STAR</p><p>Loading your family…</p></section>
   if (state.status === 'onboarding') return <Onboarding client={client} userId={user.id} onComplete={load} />
+  if (state.status === 'choose-family') return <FamilyPicker client={client} memberships={state.data.memberships} onChoose={(familyId) => { setSelectedFamilyId(familyId); void load(true, familyId) }} />
   if (state.status === 'error' && !state.data) return <section className="shared-panel" role="alert"><p className="eyebrow">OUR LITTLE STAR</p><p>{state.error}</p><button className="edit-button" onClick={() => load()}>Try again</button></section>
   const data = state.data; const children = data.children.filter((item) => !item.archived_at); const child = children.find((item) => item.id === selectedChildId) || children[0]; const balance = child ? Number(data.balances.find((item) => item.child_id === child.id)?.balance || 0) : 0; const view = { ...data, pending, setError: (problem) => setState((current) => ({ ...current, error: problem.message || String(problem) })) }
   const timeline = child ? [
