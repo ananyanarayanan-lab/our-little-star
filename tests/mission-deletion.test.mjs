@@ -33,7 +33,7 @@ function component(name, dependencies = {}, syntaxTree = ast) {
     return slots[index]
   }
   const element = (type, props, ...children) => ({ type, props: { ...props, children } })
-  const primitives = Object.fromEntries(['SafeAreaView', 'Text', 'View', 'Pressable', 'ScrollView', 'TextInput', 'Modal', 'DraggableBottomSheet', 'ManageMissionsSheet', 'MissionEditorSheet', 'MissionDragHandle', 'ParentControlsSheet', 'InviteParentSheet', 'ChildrenSheet', 'AddChildSheet', 'Celebration', 'RewardsScreen', 'RedemptionSuccess'].map((key) => [key, key]))
+  const primitives = Object.fromEntries(['SafeAreaView', 'Text', 'View', 'Pressable', 'ScrollView', 'TextInput', 'Modal', 'DraggableBottomSheet', 'ManageMissionsSheet', 'MissionEditorSheet', 'ManageRewardsSheet', 'RewardEditorSheet', 'MissionDragHandle', 'ParentControlsSheet', 'InviteParentSheet', 'ChildrenSheet', 'AddChildSheet', 'Celebration', 'RewardsScreen', 'RedemptionSuccess'].map((key) => [key, key]))
   const globals = {
     ...primitives, useState, useRef, useEffect: () => {}, element, Fragment: 'Fragment',
     styles: {}, friendlyError, sortMissions, saveMissionOrder, moveMission, dragDestination, missionRowOffset, MISSION_ROW_HEIGHT, MISSION_ROW_STEP, missionIcon, missionIconOptions, missionVisualFields, softDeleteMission,
@@ -43,7 +43,7 @@ function component(name, dependencies = {}, syntaxTree = ast) {
     Animated: { Value: class { constructor(value) { this.value = value } }, View: 'AnimatedView' },
     ...dependencies,
   }
-  const names = [name, 'useMissionDrag', 'formatCooldown', 'displayMissionName', 'unwrap']
+  const names = [name, 'useMissionDrag', 'formatCooldown', 'displayMissionName', 'unwrap', 'rewardPresentation', 'rewardDisplay', 'normalizeRewardDraft']
   const body = syntaxTree.program.body.filter((node) => node.type === 'FunctionDeclaration' && names.includes(node.id.name))
   assert.ok(body.some((node) => node.id.name === name))
   const { code } = babel.transformFromAstSync({ type: 'File', program: { type: 'Program', sourceType: 'script', body } }, '', {
@@ -381,11 +381,11 @@ test('rapid mission taps submit once, show immediate celebration and preserve co
 })
 
 test('rewards keep four cards and encouragement with locked and redeem states on common portrait phone sizes', () => {
-  const rewards = [10, 20, 30, 50].map(stars => ({ stars, name: 'Long reward '.repeat(5), description: 'A special treat' }))
+  const rewards = [10, 20, 30, 50].map(star_cost => ({ id: String(star_cost), star_cost, name: 'Long reward '.repeat(5) }))
   for (const [width, height] of [[320, 568], [360, 640], [390, 844], [412, 915]]) {
     let redeemed
-    const screen = component('RewardsScreen', { milestoneRewards: rewards, useWindowDimensions: () => ({ width, height }) })
-    const tree = screen.render({ visible: true, balance: 25, onRedeem: value => { redeemed = value } })
+    const screen = component('RewardsScreen', { useWindowDimensions: () => ({ width, height }) })
+    const tree = screen.render({ visible: true, balance: 25, rewards, onRedeem: value => { redeemed = value } })
     assert.match(text(tree), /Keep going/)
     assert.equal(nodes(tree).filter(node => node.type === 'ScrollView').length, 0)
     assert.equal(nodes(tree).filter(n => n.props.accessibilityLabel?.startsWith('Redeem ')).length, 2)

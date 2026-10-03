@@ -12,12 +12,33 @@ import * as Crypto from 'expo-crypto'
 import { configured, supabase } from './supabase'
 
 const colors = ['#F6C343', '#76CFF5', '#AEEFD7', '#F6A98C', '#9FA8E8']
-const milestoneRewards = [
-  { stars: 10, name: 'Chocolate', description: 'Pick a special chocolate treat', emoji: '🍫' },
-  { stars: 20, name: 'Going to the park', description: 'Time for a fun park trip', emoji: '🌳' },
-  { stars: 30, name: 'Choose a toy', description: 'Pick a toy you love', emoji: '🧸' },
-  { stars: 50, name: 'Big reward', description: 'Something extra special', emoji: '🏆' },
+const starterRewards = [
+  { name: 'Chocolate', starCost: 10 },
+  { name: 'Going to the park', starCost: 20 },
+  { name: 'Choose a toy', starCost: 30 },
+  { name: 'Big reward', starCost: 50 },
 ]
+
+function rewardPresentation(name) {
+  const key = String(name || '').trim().toLowerCase()
+  if (key === 'chocolate') return { emoji: '🍫', description: 'Pick a special chocolate treat' }
+  if (key === 'going to the park') return { emoji: '🌳', description: 'Time for a fun park trip' }
+  if (key === 'choose a toy') return { emoji: '🧸', description: 'Pick a toy you love' }
+  if (key === 'big reward') return { emoji: '🏆', description: 'Something extra special' }
+  return { emoji: '🎁', description: 'A special reward to look forward to' }
+}
+
+function rewardDisplay(reward) {
+  return { ...reward, stars: Number(reward.star_cost), ...rewardPresentation(reward.name) }
+}
+
+function normalizeRewardDraft(name, starCost) {
+  const normalizedName = String(name || '').trim()
+  const normalizedCost = Number(String(starCost || '').trim())
+  if (!normalizedName || normalizedName.length > 80) throw new Error('Enter a reward name up to 80 characters.')
+  if (!Number.isSafeInteger(normalizedCost) || normalizedCost < 1 || normalizedCost > 10000) throw new Error('Enter a whole number of stars from 1 to 10,000.')
+  return { name: normalizedName, starCost: normalizedCost }
+}
 const shortActivityLabels = {
   'Pooped in Potty': 'Poop in potty',
   'Pee in Potty': 'Pee in potty',
@@ -194,12 +215,27 @@ function RedemptionSuccess({ reward, onHome, onRewards }) {
   </Modal>
 }
 
-function RewardsScreen({ visible, balance, onBack, onRedeem }) {
+function RewardsScreen({ visible, balance, rewards, onBack, onRedeem }) {
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
   const availableHeight = height - insets.top - insets.bottom
   const compact = width < 360 || availableHeight < 720
   const tight = width < 340 || availableHeight < 620
+  const activeRewards = (rewards || []).filter((reward) => !reward.archived_at).map(rewardDisplay)
+  const needsScroll = activeRewards.length > 4
+  const content = <>
+    {activeRewards.map((reward) => {
+      const unlocked = balance >= reward.stars
+      const remaining = Math.max(reward.stars - balance, 0)
+      return <View key={reward.id} style={[styles.rewardsScreenCard, compact && styles.rewardsScreenCardCompact, tight && styles.rewardsScreenCardTight, !unlocked && styles.rewardsScreenCardLocked]}>
+        <View style={[styles.rewardsScreenCost, compact && styles.rewardsScreenCostCompact, tight && styles.rewardsScreenCostTight, unlocked && styles.rewardsScreenCostUnlocked]}><Text style={[styles.rewardsScreenCostNumber, tight && styles.rewardsScreenCostNumberTight]}>{reward.stars}</Text><Text style={styles.rewardsScreenCostLabel}>stars</Text></View>
+        <Text style={[styles.rewardsScreenEmoji, compact && styles.rewardsScreenEmojiCompact, tight && styles.rewardsScreenEmojiTight]}>{reward.emoji}</Text>
+        <View style={styles.rewardsScreenDetails}><Text numberOfLines={2} style={[styles.rewardsScreenRewardName, tight && styles.rewardsScreenRewardNameTight]}>{reward.name}</Text><Text numberOfLines={2} style={[styles.rewardsScreenDescription, tight && styles.rewardsScreenDescriptionTight]}>{reward.description}</Text>{unlocked ? <Pressable accessibilityRole="button" accessibilityLabel={`Redeem ${reward.name} for ${reward.stars} stars`} style={[styles.rewardsRedeemButton, tight && styles.rewardsRedeemButtonTight]} onPress={() => onRedeem(reward)}><Text style={styles.rewardsRedeemButtonText}>Redeem ({reward.stars} {'★'})</Text></Pressable> : <Text style={[styles.rewardsLockedText, tight && styles.rewardsLockedTextTight]}>Need {remaining} more {remaining === 1 ? 'star' : 'stars'}</Text>}</View>
+      </View>
+    })}
+    {!activeRewards.length ? <View style={styles.rewardsEmpty}><Text style={styles.parentSectionTitle}>Rewards are coming soon</Text><Text style={styles.body}>A parent can add rewards in Parent Controls.</Text></View> : null}
+    <View style={[styles.keepGoingCard, compact && styles.keepGoingCardCompact, tight && styles.keepGoingCardTight]}><Text style={[styles.keepGoingStar, tight && styles.keepGoingStarTight]}>{'★'}</Text><View><Text style={[styles.keepGoingTitle, tight && styles.keepGoingTitleTight]}>Keep going!</Text><Text style={[styles.keepGoingText, tight && styles.keepGoingTextTight]}>You’re doing great!</Text></View></View>
+  </>
 
   return <Modal visible={visible} animationType="slide" onRequestClose={onBack}>
     <SafeAreaView style={styles.rewardsScreen}>
@@ -208,18 +244,7 @@ function RewardsScreen({ visible, balance, onBack, onRedeem }) {
         <View style={styles.rewardsHeading}><Text style={[styles.rewardsScreenTitle, tight && styles.rewardsScreenTitleTight]}>Rewards</Text><Text style={[styles.rewardsScreenSubtitle, tight && styles.rewardsScreenSubtitleTight]}>You earn stars by doing awesome things!</Text></View>
         <View accessible accessibilityLabel={`${balance} stars`} style={[styles.rewardsHeaderBalance, tight && styles.rewardsHeaderBalanceTight]}><Text style={[styles.rewardsHeaderBalanceStar, tight && styles.rewardsHeaderBalanceStarTight]}>{'★'}</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55} style={[styles.rewardsHeaderBalanceNumber, tight && styles.rewardsHeaderBalanceNumberTight]}>{balance}</Text><Text style={styles.rewardsHeaderBalanceLabel}>stars</Text></View>
       </View>
-      <View style={[styles.rewardsScreenContent, { paddingBottom: Math.max(insets.bottom, 12) }, compact && styles.rewardsScreenContentCompact, tight && styles.rewardsScreenContentTight]}>
-        {milestoneRewards.map((reward) => {
-          const unlocked = balance >= reward.stars
-          const remaining = Math.max(reward.stars - balance, 0)
-          return <View key={reward.stars} style={[styles.rewardsScreenCard, compact && styles.rewardsScreenCardCompact, tight && styles.rewardsScreenCardTight, !unlocked && styles.rewardsScreenCardLocked]}>
-            <View style={[styles.rewardsScreenCost, compact && styles.rewardsScreenCostCompact, tight && styles.rewardsScreenCostTight, unlocked && styles.rewardsScreenCostUnlocked]}><Text style={[styles.rewardsScreenCostNumber, tight && styles.rewardsScreenCostNumberTight]}>{reward.stars}</Text><Text style={styles.rewardsScreenCostLabel}>stars</Text></View>
-            <Text style={[styles.rewardsScreenEmoji, compact && styles.rewardsScreenEmojiCompact, tight && styles.rewardsScreenEmojiTight]}>{reward.emoji}</Text>
-            <View style={styles.rewardsScreenDetails}><Text numberOfLines={2} style={[styles.rewardsScreenRewardName, tight && styles.rewardsScreenRewardNameTight]}>{reward.name}</Text><Text numberOfLines={2} style={[styles.rewardsScreenDescription, tight && styles.rewardsScreenDescriptionTight]}>{reward.description}</Text>{unlocked ? <Pressable accessibilityRole="button" accessibilityLabel={`Redeem ${reward.name} for ${reward.stars} stars`} style={[styles.rewardsRedeemButton, tight && styles.rewardsRedeemButtonTight]} onPress={() => onRedeem(reward)}><Text style={styles.rewardsRedeemButtonText}>Redeem ({reward.stars} {'★'})</Text></Pressable> : <Text style={[styles.rewardsLockedText, tight && styles.rewardsLockedTextTight]}>Need {remaining} more {remaining === 1 ? 'star' : 'stars'}</Text>}</View>
-          </View>
-        })}
-        <View style={[styles.keepGoingCard, compact && styles.keepGoingCardCompact, tight && styles.keepGoingCardTight]}><Text style={[styles.keepGoingStar, tight && styles.keepGoingStarTight]}>{'★'}</Text><View><Text style={[styles.keepGoingTitle, tight && styles.keepGoingTitleTight]}>Keep going!</Text><Text style={[styles.keepGoingText, tight && styles.keepGoingTextTight]}>You’re doing great!</Text></View></View>
-      </View>
+      {needsScroll ? <ScrollView contentContainerStyle={[styles.rewardsScrollContent, { paddingBottom: Math.max(insets.bottom, 12) }]}>{content}</ScrollView> : <View style={[styles.rewardsScreenContent, { paddingBottom: Math.max(insets.bottom, 12) }, compact && styles.rewardsScreenContentCompact, tight && styles.rewardsScreenContentTight]}>{content}</View>}
     </SafeAreaView>
   </Modal>
 }
@@ -324,7 +349,7 @@ function InviteParentSheet({ visible, familyId, onDismiss }) {
   </DraggableBottomSheet>
 }
 
-function ParentControlsSheet({ visible, family, members, children, currentUserId, isOwner, onInvite, onManageChildren, onManageMissions, onAddMission, onReview, onSignOut, onDismiss }) {
+function ParentControlsSheet({ visible, family, members, children, currentUserId, isOwner, onInvite, onManageChildren, onManageMissions, onAddMission, onManageRewards, onReview, onSignOut, onDismiss }) {
   return <DraggableBottomSheet visible={visible} title="Parent controls" onDismiss={onDismiss}>
     <Text style={styles.parentSectionTitle}>Family</Text>
     <Text style={styles.parentHouseholdName}>{family?.name || 'Household not loaded'}</Text>
@@ -337,6 +362,8 @@ function ParentControlsSheet({ visible, family, members, children, currentUserId
     <Text style={styles.parentSectionTitle}>Missions</Text>
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onManageMissions}><Text>Manage missions</Text></Pressable>
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onAddMission}><Text>Add mission</Text></Pressable>
+    <Text style={styles.parentSectionTitle}>Rewards</Text>
+    <Pressable accessibilityRole="button" style={styles.secondary} onPress={onManageRewards}><Text>Manage rewards</Text></Pressable>
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onReview}><Text>Review today’s missions</Text></Pressable>
     <Pressable accessibilityRole="button" style={styles.signOut} onPress={onSignOut}><Text>Sign out</Text></Pressable>
   </DraggableBottomSheet>
@@ -378,6 +405,80 @@ function AddChildSheet({ visible, familyId, onSaved, onDismiss }) {
     <TextInput accessibilityLabel="Child name" autoCapitalize="words" maxLength={80} placeholder="Child name" value={name} onChangeText={setName} style={styles.input} />
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     <Pressable accessibilityRole="button" disabled={busy} style={[styles.primary, busy && styles.missionBusy]} onPress={save}><Text style={styles.primaryText}>{busy ? 'Adding…' : 'Add child'}</Text></Pressable>
+  </DraggableBottomSheet>
+}
+
+function RewardEditorSheet({ visible, familyId, reward, onSaved, onDismiss }) {
+  const [name, setName] = useState('')
+  const [starCost, setStarCost] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!visible) return
+    setName(reward?.name || '')
+    setStarCost(reward ? String(reward.star_cost) : '')
+    setBusy(false); setError('')
+  }, [visible, reward])
+
+  async function save() {
+    if (busy) return
+    let normalized
+    try { normalized = normalizeRewardDraft(name, starCost) } catch (problem) { setError(problem.message); return }
+    setBusy(true); setError('')
+    try {
+      const result = reward
+        ? await supabase.from('rewards').update({ name: normalized.name, star_cost: normalized.starCost }).eq('id', reward.id)
+        : await supabase.from('rewards').insert({ family_id: familyId, name: normalized.name, star_cost: normalized.starCost })
+      if (result.error) throw result.error
+      await onSaved()
+    } catch (problem) { setError(friendlyError(problem, 'Could not save this reward. Please try again.')) } finally { setBusy(false) }
+  }
+
+  return <DraggableBottomSheet visible={visible} title={reward ? 'Edit reward' : 'Add reward'} onDismiss={onDismiss}>
+    <Text style={styles.body}>Reward name</Text>
+    <TextInput accessibilityLabel="Reward name" autoCapitalize="sentences" maxLength={80} placeholder="Movie night" value={name} onChangeText={setName} style={styles.input} />
+    <Text style={styles.body}>How many stars?</Text>
+    <TextInput accessibilityLabel="Reward star cost" keyboardType="number-pad" maxLength={5} placeholder="10" value={starCost} onChangeText={setStarCost} style={styles.input} />
+    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    <Pressable accessibilityRole="button" disabled={busy} style={[styles.primary, busy && styles.missionBusy]} onPress={save}><Text style={styles.primaryText}>{busy ? 'Saving…' : reward ? 'Save reward' : 'Add reward'}</Text></Pressable>
+  </DraggableBottomSheet>
+}
+
+function ManageRewardsSheet({ visible, rewards, familyId, onAdd, onEdit, onRefresh, onDismiss }) {
+  const [busyId, setBusyId] = useState(null)
+  const [error, setError] = useState('')
+  const activeRewards = (rewards || []).filter((reward) => !reward.archived_at)
+  const archivedRewards = (rewards || []).filter((reward) => reward.archived_at)
+
+  async function setArchived(reward, archived) {
+    setBusyId(reward.id); setError('')
+    try {
+      const result = await supabase.from('rewards').update({ archived_at: archived ? new Date().toISOString() : null }).eq('id', reward.id)
+      if (result.error) throw result.error
+      await onRefresh()
+    } catch (problem) { setError(friendlyError(problem, 'Could not update this reward. Please try again.')) } finally { setBusyId(null) }
+  }
+
+  async function addStarters() {
+    setBusyId('starters'); setError('')
+    try {
+      const result = await supabase.from('rewards').insert(starterRewards.map((reward) => ({ family_id: familyId, name: reward.name, star_cost: reward.starCost })))
+      if (result.error) throw result.error
+      await onRefresh()
+    } catch (problem) { setError(friendlyError(problem, 'Could not add starter rewards. Please try again.')) } finally { setBusyId(null) }
+  }
+
+  const rewardRow = (reward, archived) => <View key={reward.id} style={[styles.manageRewardRow, archived && styles.manageRewardRowArchived]}><Text style={styles.manageRewardEmoji}>{rewardPresentation(reward.name).emoji}</Text><View style={styles.manageRewardDetails}><Text numberOfLines={2} style={styles.manageRewardName}>{reward.name}</Text><Text style={styles.manageRewardMeta}>{reward.star_cost} stars{archived ? ' · Archived' : ''}</Text></View><View><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => onEdit(reward)}><Text>Edit</Text></Pressable><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => setArchived(reward, !archived)}><Text style={archived ? styles.restoreText : styles.deleteText}>{busyId === reward.id ? 'Saving…' : archived ? 'Restore' : 'Archive'}</Text></Pressable></View></View>
+
+  return <DraggableBottomSheet visible={visible} title="Manage rewards" onDismiss={onDismiss}>
+    <Pressable accessibilityRole="button" style={styles.primary} disabled={Boolean(busyId)} onPress={onAdd}><Text style={styles.primaryText}>Add reward</Text></Pressable>
+    {!activeRewards.length && !archivedRewards.length ? <Pressable accessibilityRole="button" style={styles.secondary} disabled={Boolean(busyId)} onPress={addStarters}><Text>{busyId === 'starters' ? 'Adding…' : 'Add starter rewards'}</Text></Pressable> : null}
+    <Text style={styles.body}>Choose the rewards your child can work toward and how many stars each one needs.</Text>
+    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    {activeRewards.map((reward) => rewardRow(reward, false))}
+    {!activeRewards.length && archivedRewards.length ? <Text style={styles.body}>No active rewards yet. Restore one or add a new reward.</Text> : null}
+    {archivedRewards.length ? <><Text style={styles.parentMemberLabel}>Archived rewards</Text>{archivedRewards.map((reward) => rewardRow(reward, true))}</> : null}
   </DraggableBottomSheet>
 }
 
@@ -534,6 +635,8 @@ function Home({ data, refresh, onSignOut, loadError }) {
   const [selectedChildId, setSelectedChildId] = useState(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [manageMissionsOpen, setManageMissionsOpen] = useState(false)
+  const [manageRewardsOpen, setManageRewardsOpen] = useState(false)
+  const [editingReward, setEditingReward] = useState(null)
   const [deletedMissionIds, setDeletedMissionIds] = useState([])
   const [missionOrder, setMissionOrder] = useState(null)
   const [editingMission, setEditingMission] = useState(null)
@@ -676,27 +779,22 @@ function Home({ data, refresh, onSignOut, loadError }) {
     } catch (problem) { setError(friendlyError(problem)) } finally { setPendingMissionIds((ids) => ids.filter((id) => id !== mission.id)) }
   }
 
-  function startRedemption(milestone) {
-    if (!child || balance < milestone.stars || redeeming) return
+  function startRedemption(reward) {
+    if (!child || balance < reward.stars || redeeming) return
     setRedemptionError('')
-    setRedeemAttempt({ milestone, requestId: Crypto.randomUUID() })
+    setRedeemAttempt({ reward, requestId: Crypto.randomUUID() })
   }
 
   async function confirmRedemption() {
     if (!child || !redeemAttempt || redeeming) return
-    const { milestone, requestId } = redeemAttempt
+    const { reward, requestId } = redeemAttempt
     setRedeeming(true); setRedemptionError('')
     try {
-      let savedReward = rewards.find((reward) => !reward.archived_at && reward.name === milestone.name && Number(reward.star_cost) === milestone.stars)
-      if (!savedReward) {
-        const result = await supabase.from('rewards').insert({ family_id: data.family.id, name: milestone.name, star_cost: milestone.stars }).select('id, name, star_cost').single()
-        savedReward = unwrap(result)
-      }
-      unwrap(await supabase.rpc('redeem_reward', { p_child_id: child.id, p_reward_id: savedReward.id, p_request_id: requestId }))
-      setOptimisticSpends((spends) => [...spends, { request_id: requestId, child_id: child.id, stars_spent: milestone.stars }])
+      unwrap(await supabase.rpc('redeem_reward', { p_child_id: child.id, p_reward_id: reward.id, p_request_id: requestId }))
+      setOptimisticSpends((spends) => [...spends, { request_id: requestId, child_id: child.id, stars_spent: reward.stars }])
       await refresh()
       setRedeemAttempt(null)
-      setRedeemedReward({ ...milestone, requestId })
+      setRedeemedReward({ ...reward, requestId })
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
     } catch (problem) {
       const message = /not enough stars/i.test(problem.message || '')
@@ -725,18 +823,20 @@ function Home({ data, refresh, onSignOut, loadError }) {
 })}</View>{!activeMissions.length ? <View style={styles.empty}><Text style={styles.parentSectionTitle}>Ready to get started?</Text><Text style={styles.body}>Add a mission in Parent Controls.</Text></View> : null}</ScrollView></View><View style={[styles.homeFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}><View style={styles.encouragement}><Text style={styles.encouragementText}>You’re doing amazing!</Text><Text style={styles.encouragementHeart}>{'♥'}</Text></View></View></> : <View style={styles.empty}><Text style={styles.sheetTitle}>Set up a child profile</Text><Text style={styles.body}>This household does not have an active child profile yet.</Text><Pressable accessibilityRole="button" style={styles.secondary} onPress={refresh}><Text>Try again</Text></Pressable></View>}
     </View>
     <Celebration visible={celebrating} balanceTarget={balanceTarget} run={celebrationRun} onFinish={finishCelebration} />
-    <ParentControlsSheet visible={settingsOpen} family={data?.family} members={data?.members} children={children} currentUserId={data?.userId} isOwner={data?.membership?.role === 'owner'} onInvite={() => setInviteOpen(true)} onManageChildren={() => { setChildrenSheetMode('manage'); setChildrenOpen(true) }} onManageMissions={() => setManageMissionsOpen(true)} onAddMission={() => setEditingMission({})} onReview={() => setReviewOpen(true)} onSignOut={onSignOut} onDismiss={() => setSettingsOpen(false)} />
+    <ParentControlsSheet visible={settingsOpen} family={data?.family} members={data?.members} children={children} currentUserId={data?.userId} isOwner={data?.membership?.role === 'owner'} onInvite={() => setInviteOpen(true)} onManageChildren={() => { setChildrenSheetMode('manage'); setChildrenOpen(true) }} onManageMissions={() => setManageMissionsOpen(true)} onAddMission={() => setEditingMission({})} onManageRewards={() => setManageRewardsOpen(true)} onReview={() => setReviewOpen(true)} onSignOut={onSignOut} onDismiss={() => setSettingsOpen(false)} />
     <ChildrenSheet visible={childrenOpen} children={children} selectedChildId={child?.id} showAdd={childrenSheetMode === 'manage'} onSelect={setSelectedChildId} onAdd={() => setAddChildOpen(true)} onDismiss={() => setChildrenOpen(false)} />
     <AddChildSheet visible={addChildOpen} familyId={data?.family?.id} onSaved={async (newChild) => { const result = await refresh(); setSelectedChildId(newChild.id); setAddChildOpen(false); setChildrenOpen(false); if (!result.ok) setError('Child added. Refresh to view their stars.'); return true }} onDismiss={() => setAddChildOpen(false)} />
     <InviteParentSheet visible={inviteOpen} familyId={data?.family?.id} onDismiss={() => setInviteOpen(false)} />
+    <ManageRewardsSheet visible={manageRewardsOpen} rewards={rewards} familyId={data?.family?.id} onAdd={() => setEditingReward({})} onEdit={setEditingReward} onRefresh={refresh} onDismiss={() => setManageRewardsOpen(false)} />
+    <RewardEditorSheet visible={editingReward !== null} familyId={data?.family?.id} reward={editingReward?.id ? editingReward : null} onSaved={async () => { await refresh(); setEditingReward(null); setManageRewardsOpen(false) }} onDismiss={() => setEditingReward(null)} />
     <ManageMissionsSheet visible={manageMissionsOpen} missions={missions} onAdd={() => setEditingMission({})} onEdit={setEditingMission} onDelete={removeMission} onReorder={reorderMissions} onDismiss={() => setManageMissionsOpen(false)} />
     <MissionEditorSheet visible={editingMission !== null} familyId={data?.family?.id} mission={editingMission?.id ? editingMission : null} onSaved={async () => { await refresh(); setEditingMission(null); setManageMissionsOpen(false) }} onDismiss={() => setEditingMission(null)} />
     <DraggableBottomSheet visible={reviewOpen} title="Today's missions" onDismiss={() => setReviewOpen(false)}>
       <Text style={styles.body}>Undo only a mistaken tap.</Text>
       {reviewableMissions.length ? reviewableMissions.map((mission) => <View key={mission.id} style={styles.reviewRow}><Text style={styles.reviewMission}>{missionIcon(mission)} {displayMissionName(mission)}</Text><Pressable accessibilityRole="button" accessibilityLabel={`Undo ${displayMissionName(mission)}`} disabled={pendingMissionIds.includes(mission.id)} style={styles.reviewUndo} onPress={() => undo(mission)}><Text style={styles.reviewUndoText}>Undo</Text></Pressable></View>) : <Text style={styles.body}>No activities to review today.</Text>}
     </DraggableBottomSheet>
-    <RewardsScreen visible={rewardsOpen} balance={balance} onBack={() => setRewardsOpen(false)} onRedeem={startRedemption} />
-    <Modal visible={Boolean(redeemAttempt)} transparent animationType="fade" onRequestClose={() => !redeeming && setRedeemAttempt(null)}><View style={styles.confirmShade}><View style={styles.confirmCard}><Text style={styles.confirmEmoji}>{redeemAttempt?.milestone.emoji}</Text><Text style={styles.confirmTitle}>Redeem {redeemAttempt?.milestone.name}?</Text><Text style={styles.body}>This uses {redeemAttempt?.milestone.stars} stars. A grown-up should confirm.</Text>{redemptionError ? <Text accessibilityRole="alert" style={styles.confirmError}>{redemptionError}</Text> : null}<View style={styles.confirmActions}><Pressable accessibilityRole="button" disabled={redeeming} style={styles.cancelButton} onPress={() => setRedeemAttempt(null)}><Text style={styles.cancelButtonText}>Not now</Text></Pressable><Pressable accessibilityRole="button" disabled={redeeming} style={styles.confirmButton} onPress={confirmRedemption}><Text style={styles.confirmButtonText}>{redeeming ? 'Redeeming…' : 'Yes, redeem'}</Text></Pressable></View></View></View></Modal>
+    <RewardsScreen visible={rewardsOpen} balance={balance} rewards={rewards} onBack={() => setRewardsOpen(false)} onRedeem={startRedemption} />
+    <Modal visible={Boolean(redeemAttempt)} transparent animationType="fade" onRequestClose={() => !redeeming && setRedeemAttempt(null)}><View style={styles.confirmShade}><View style={styles.confirmCard}><Text style={styles.confirmEmoji}>{redeemAttempt?.reward.emoji}</Text><Text style={styles.confirmTitle}>Redeem {redeemAttempt?.reward.name}?</Text><Text style={styles.body}>This uses {redeemAttempt?.reward.stars} stars. A grown-up should confirm.</Text>{redemptionError ? <Text accessibilityRole="alert" style={styles.confirmError}>{redemptionError}</Text> : null}<View style={styles.confirmActions}><Pressable accessibilityRole="button" disabled={redeeming} style={styles.cancelButton} onPress={() => setRedeemAttempt(null)}><Text style={styles.cancelButtonText}>Not now</Text></Pressable><Pressable accessibilityRole="button" disabled={redeeming} style={styles.confirmButton} onPress={confirmRedemption}><Text style={styles.confirmButtonText}>{redeeming ? 'Redeeming…' : 'Yes, redeem'}</Text></Pressable></View></View></View></Modal>
     <RedemptionSuccess reward={redeemedReward} onHome={() => { setRedeemedReward(null); setRewardsOpen(false) }} onRewards={() => setRedeemedReward(null)} />
   </View>
 }
@@ -910,7 +1010,7 @@ const styles = StyleSheet.create({
   rewardsHeaderBalanceTight: { gap: 2, paddingHorizontal: 6, paddingVertical: 5, borderRadius: 16 }, rewardsHeaderBalanceStarTight: { fontSize: 17 }, rewardsHeaderBalanceNumberTight: { fontSize: 18, lineHeight: 21 },
   rewardsScreenContent: { width: '100%', maxWidth: 600, alignSelf: 'center', flex: 1, justifyContent: 'space-between', gap: 8, paddingHorizontal: 14, paddingTop: 0 },
   rewardsScreenContentCompact: { gap: 6, paddingHorizontal: 12 },
-  rewardsScreenContentTight: { gap: 4, paddingHorizontal: 10 },
+  rewardsScreenContentTight: { gap: 4, paddingHorizontal: 10 }, rewardsScrollContent: { width: '100%', maxWidth: 600, alignSelf: 'center', gap: 8, paddingHorizontal: 14, paddingTop: 2 }, rewardsEmpty: { alignItems: 'center', gap: 6, paddingVertical: 24, paddingHorizontal: 18, borderRadius: 20, backgroundColor: '#FFFFFFAA' },
   rewardsScreenCard: { minHeight: 116, flexDirection: 'row', alignItems: 'center', gap: 10, padding: 11, borderRadius: 23, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D4E7F1', shadowColor: '#0B2F57', shadowOpacity: 0.08, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 3 }, rewardsScreenCardLocked: { backgroundColor: '#FCFEFF', borderColor: '#D4E7F1' },
   rewardsScreenCardCompact: { minHeight: 96, gap: 6, padding: 8, borderRadius: 19 }, rewardsScreenCardTight: { minHeight: 82, gap: 5, padding: 6, borderRadius: 17 },
   rewardsScreenCost: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E6F3FB', borderWidth: 1, borderColor: '#D8E9F3' }, rewardsScreenCostUnlocked: { backgroundColor: '#FFF7D6', borderColor: '#F1D778' }, rewardsScreenCostNumber: { color: '#123A63', fontSize: 27, lineHeight: 29, fontWeight: '900' }, rewardsScreenCostLabel: { color: '#123A63', fontSize: 9, fontWeight: '800' },
@@ -923,6 +1023,7 @@ const styles = StyleSheet.create({
   rewardsBalance: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 24, backgroundColor: '#FFF7D6', borderWidth: 1, borderColor: '#F1D778' }, rewardsBalanceStar: { color: '#F6C343', fontSize: 30 }, rewardsBalanceNumber: { color: '#123A63', fontSize: 30, fontWeight: '800' }, rewardsBalanceLabel: { marginTop: 5, color: '#123A63', fontSize: 14, fontWeight: '600' },
   rewardsScroll: { flex: 1 }, rewardsList: { gap: 10, paddingVertical: 4 }, redeemButton: { alignSelf: 'flex-start', marginTop: 7, minHeight: 32, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 16, backgroundColor: '#0E3A66' }, redeemButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   missionDragHandle: { width: 44, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center' }, missionDragGlyph: { color: '#456888', fontSize: 28 }, missionRowDragging: { elevation: 8, shadowColor: '#123A63', shadowOpacity: 0.2, shadowRadius: 8 },
+  manageRewardRow: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 16, backgroundColor: '#EAF1F7' }, manageRewardRowArchived: { opacity: 0.7 }, manageRewardEmoji: { fontSize: 28 }, manageRewardDetails: { flex: 1, minWidth: 0 }, manageRewardName: { color: '#123A63', fontSize: 15, fontWeight: '800' }, manageRewardMeta: { marginTop: 2, color: '#456888', fontSize: 12 }, restoreText: { color: '#0E6B53', fontWeight: '700' },
   deleteText: { color: '#B42318', fontWeight: '700' }, deleteButton: { backgroundColor: '#B42318' },
   confirmShade: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#0B2F5788' }, confirmCard: { width: '100%', maxWidth: 340, alignItems: 'center', gap: 12, padding: 24, borderRadius: 24, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#BFD9EA' }, confirmEmoji: { fontSize: 52 }, confirmTitle: { color: '#123A63', fontSize: 22, fontWeight: '800', textAlign: 'center' }, confirmError: { width: '100%', padding: 10, borderRadius: 12, backgroundColor: '#FCE6E0', color: '#963A2C', textAlign: 'center', fontSize: 13 }, confirmActions: { width: '100%', flexDirection: 'row', gap: 10, marginTop: 4 }, cancelButton: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#EAF1F7' }, cancelButtonText: { color: '#123A63', fontWeight: '700' }, confirmButton: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#0E3A66' }, confirmButtonText: { color: '#FFFFFF', fontWeight: '800' },
   redemptionSuccess: { flex: 1, backgroundColor: '#D9F1FF', overflow: 'hidden' }, redemptionSuccessContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 28, gap: 16 }, redemptionConfetti: { position: 'absolute', width: 12, height: 25, borderRadius: 5, opacity: 0.9 },
