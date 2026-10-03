@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { emojiOptions } from './progress'
-import { invitationIdFromSearch, invitationLink, isOwnerRole, isUuid } from './invitations'
+import { softDeleteMission } from '../mobile/missionDeletion.mjs'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { missionIconOptions, missionIcon, completionIcon, missionVisualFields } from '../mobile/missionIcons.mjs'
+import { clearPendingInvite, invitationLink, inviteTokenFromSearch, isOwnerRole, readPendingInvite, savePendingInvite } from './invitations'
 
 const zones = [['America/New_York', 'Eastern Time — New York'], ['America/Chicago', 'Central Time — Chicago'], ['America/Denver', 'Mountain Time — Denver'], ['America/Los_Angeles', 'Pacific Time — Los Angeles'], ['America/Anchorage', 'Alaska Time — Anchorage'], ['Pacific/Honolulu', 'Hawaii Time — Honolulu'], ['Europe/London', 'United Kingdom — London'], ['Europe/Paris', 'Central Europe — Paris'], ['Asia/Tokyo', 'Japan — Tokyo'], ['Australia/Sydney', 'Australia — Sydney']]
 const rewardIdeas = ['Movie night', 'Pick out a toy', 'Choose a bedtime story', 'Trip to the playground']
@@ -40,26 +41,42 @@ function Onboarding({ client, userId, onComplete }) {
   </form></section>
 }
 
-function EmojiPicker({ value, onChange }) {
+function MissionIconPicker({ value, onChange }) {
   const [search, setSearch] = useState('')
-  const choices = emojiOptions.filter(([emoji, label]) => (emoji + ' ' + label).toLowerCase().includes(search.trim().toLowerCase()))
-  return <fieldset className="emoji-picker"><legend>Choose an emoji</legend><label htmlFor="shared-emoji-search">Find an icon</label><input id="shared-emoji-search" type="search" placeholder="Search icons, e.g. laundry" value={search} onChange={(e) => setSearch(e.target.value)} /><div className="emoji-options">{choices.map(([emoji, label]) => <button type="button" key={emoji} aria-label={label} aria-pressed={value === emoji} onClick={() => onChange(emoji)}><span className="emoji-symbol" aria-hidden="true">{emoji}</span><span className="emoji-label">{label}</span>{value === emoji && <span className="emoji-check" aria-hidden="true">✓</span>}</button>)}</div></fieldset>
+  const choices = missionIconOptions.filter(([key, , label]) => (key + ' ' + label).toLowerCase().includes(search.trim().toLowerCase()))
+  return <fieldset className="emoji-picker"><legend>Choose an icon</legend><label htmlFor="shared-emoji-search">Find an icon</label><input id="shared-emoji-search" type="search" placeholder="Search icons, e.g. laundry" value={search} onChange={(e) => setSearch(e.target.value)} /><div className="emoji-options">{choices.map(([key, glyph, label]) => <button type="button" key={key} aria-label={label} aria-pressed={value === key} onClick={() => onChange(key)}><span className="emoji-symbol" aria-hidden="true">{glyph}</span><span className="emoji-label">{label}</span>{value === key && <span className="emoji-check" aria-hidden="true">✓</span>}</button>)}</div></fieldset>
 }
 
-function MissionManager({ data, mutate }) {
-  const blank = { name: '', emoji: '⭐', stars: '', frequency: 'once_daily' }
+function MissionManager({ data, mutate, onDeleteMission }) {
+  const blank = { name: '', icon_key: 'star', stars: '', frequency: 'once_daily' }
   const [draft, setDraft] = useState(blank); const [editing, setEditing] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const deletingRef = useRef(false)
+  const activeMissions = data.missions.filter((mission) => !mission.archived_at)
+  function cancelDelete() { if (!deletingRef.current) { setDeleteTarget(null); setDeleteError('') } }
+  async function confirmDelete() {
+    if (!deleteTarget || deletingRef.current) return
+    deletingRef.current = true; setDeleting(true); setDeleteError('')
+    try {
+      await onDeleteMission(deleteTarget)
+      if (editing === deleteTarget.id) { setEditing(null); setDraft(blank) }
+      setDeleteTarget(null)
+    } catch (problem) { setDeleteError(problem.message || 'Could not delete this mission. Please try again.') }
+    finally { deletingRef.current = false; setDeleting(false) }
+  }
   async function save(event) {
     event.preventDefault(); const name = draft.name.trim(); if (!name) throw new Error('Enter a mission name.'); const stars = positive(draft.stars, 'Stars')
-    const row = { name, emoji: draft.emoji, stars, frequency: draft.frequency }
+    const row = { name, ...missionVisualFields(draft.icon_key), stars, frequency: draft.frequency }
     if (editing) await mutate('mission-' + editing, () => data.client.from('missions').update(row).eq('id', editing).then(unwrap), 'Mission updated. Past stars are unchanged.')
     else await mutate('mission-new', () => data.client.from('missions').insert({ ...row, family_id: data.family.id }).then(unwrap), 'Mission added to Today.')
     setDraft(blank); setEditing(null)
   }
-  return <section className="shared-manager" aria-labelledby="missions-title"><p className="eyebrow">MISSIONS</p><h2 id="missions-title">Manage missions</h2><p className="section-description">Archived missions disappear from Today and stay in history.</p><div className="manager-grid"><form className="settings-form mission-editor" onSubmit={(e) => save(e).catch(data.setError)}><h3>{editing ? 'Edit mission' : 'Create a mission'}</h3>
-    <label htmlFor="shared-mission-name">Mission name</label><input id="shared-mission-name" required maxLength="120" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /><EmojiPicker value={draft.emoji} onChange={(emoji) => setDraft({ ...draft, emoji })} />
+  return <section className="shared-manager" aria-labelledby="missions-title"><p className="eyebrow">MISSIONS</p><h2 id="missions-title">Manage missions</h2><p className="section-description">Deleted missions disappear from Today. Past activity stays in history.</p><div className="manager-grid"><form className="settings-form mission-editor" onSubmit={(e) => save(e).catch(data.setError)}><h3>{editing ? 'Edit mission' : 'Create a mission'}</h3>
+    <label htmlFor="shared-mission-name">Mission name</label><input id="shared-mission-name" required maxLength="120" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /><MissionIconPicker value={draft.icon_key} onChange={(icon_key) => setDraft({ ...draft, icon_key })} />
     <label htmlFor="shared-mission-stars">Stars earned each time</label><input id="shared-mission-stars" type="number" min="1" step="1" inputMode="numeric" required value={draft.stars} onChange={(e) => setDraft({ ...draft, stars: e.target.value })} /><label htmlFor="shared-mission-frequency">How often?</label><select id="shared-mission-frequency" value={draft.frequency} onChange={(e) => setDraft({ ...draft, frequency: e.target.value })}><option value="once_daily">Once daily</option><option value="repeatable">Repeatable</option></select><p className="field-hint">Repeatable missions can earn stars every time they are completed.</p><div className="form-actions"><button className="complete-button" disabled={data.pending}>{editing ? 'Save changes' : 'Add mission'}</button>{editing && <button type="button" className="edit-button" onClick={() => { setEditing(null); setDraft(blank) }}>Cancel</button>}</div></form>
-    <div><h3>Your missions</h3>{!data.missions.length ? <p className="empty-missions">No missions yet.</p> : <ul className="chore-list">{data.missions.map((mission) => <li className="chore-card" key={mission.id}><span className="chore-icon" aria-hidden="true">{mission.emoji}</span><div className="chore-detail"><h4>{mission.name}</h4><p>{mission.stars} stars · {mission.frequency === 'once_daily' ? 'Once daily' : 'Repeatable'}{mission.archived_at && ' · Archived'}</p><div className="form-actions"><button className="edit-button" disabled={data.pending} onClick={() => { setEditing(mission.id); setDraft({ name: mission.name, emoji: mission.emoji, stars: String(mission.stars), frequency: mission.frequency }) }}>Edit</button><button className="edit-button" disabled={data.pending} onClick={() => mutate('archive-mission-' + mission.id, () => data.client.from('missions').update({ archived_at: mission.archived_at ? null : new Date().toISOString() }).eq('id', mission.id).then(unwrap), mission.archived_at ? 'Mission restored.' : 'Mission archived.')}>{mission.archived_at ? 'Restore' : 'Archive'}</button></div></div></li>)}</ul>}</div></div></section>
+    <div><h3>Your missions</h3>{!activeMissions.length ? <p className="empty-missions">No missions yet.</p> : <ul className="chore-list">{activeMissions.map((mission) => <li className="chore-card" key={mission.id}><span className="chore-icon" aria-hidden="true">{missionIcon(mission)}</span><div className="chore-detail"><h4>{mission.name}</h4><p>{Number(mission.repeat_cooldown_seconds || 120) / 60} min cooldown</p><div className="form-actions"><button className="edit-button" disabled={data.pending} onClick={() => { setEditing(mission.id); setDraft({ name: mission.name, icon_key: mission.icon_key, stars: String(mission.stars), frequency: mission.frequency }) }}>Edit</button><button className="edit-button mission-delete-action" disabled={data.pending} onClick={() => { setDeleteError(''); setDeleteTarget(mission) }}>Delete</button></div></div></li>)}</ul>}</div></div>{deleteTarget && <dialog className="confirmation-card mission-delete-dialog" ref={(node) => { if (node && !node.open) node.showModal() }} aria-labelledby="delete-mission-title" aria-describedby="delete-mission-message" onCancel={(event) => { event.preventDefault(); cancelDelete() }}><h4 id="delete-mission-title">Delete mission?</h4><p id="delete-mission-message">Are you sure you want to delete this mission?</p>{deleteError && <p role="alert">{deleteError}</p>}<div className="form-actions"><button autoFocus className="edit-button" disabled={deleting} onClick={cancelDelete}>Cancel</button><button className="complete-button mission-delete-confirm" disabled={deleting} onClick={confirmDelete}>Delete</button></div></dialog>}</section>
 }
 
 function RewardManager({ data, mutate, child, balance }) {
@@ -81,7 +98,7 @@ function RewardManager({ data, mutate, child, balance }) {
 function Today({ data, mutate, child, balance, timeZone, onRewards }) {
   const active = data.missions.filter((mission) => !mission.archived_at); const events = data.completions.filter((event) => event.child_id === child.id); const goal = data.rewards.find((reward) => reward.id === child.selected_reward_id && !reward.archived_at)
   const today = familyDay(timeZone)
-  return <><section className="today-heading"><p className="eyebrow">TODAY</p><h2>{child.name}’s Stars <span aria-hidden="true">✨</span></h2><p>A little effort, a little magic.</p></section><section className="balance-card"><div><h2>Your star jar</h2><p className="balance"><strong>{balance}</strong><span>{balance === 1 ? 'star' : 'stars'} collected</span></p><p>Every little helping hand adds a little sparkle.</p></div><div className="star-art" aria-hidden="true"><span className="big-star">★</span></div></section><section className="today-stack"><section aria-labelledby="today-missions"><div className="section-heading"><h2 id="today-missions">Today’s little missions</h2></div>{!active.length ? <p className="empty-missions">No missions for Today yet.</p> : <ul className="chore-list">{active.map((mission) => { const completed = events.filter((event) => event.mission_id === mission.id && event.completed_on === today && !event.undone_at); const latest = completed[0]; const done = mission.frequency === 'once_daily' && completed.length > 0; return <li className={'chore-card ' + (done ? 'is-done' : '')} key={mission.id}><span className="chore-icon" aria-hidden="true">{mission.emoji}</span><div className="chore-detail"><h3>{mission.name}</h3><p>★ {mission.stars} stars · {mission.frequency === 'once_daily' ? 'Once daily' : 'Repeatable'}</p>{completed.length > 0 && <p>{completed.length} completed today</p>}</div><div className="chore-actions"><button className="complete-button" disabled={data.pending || done} onClick={() => mutate('award-' + mission.id, () => data.client.rpc('award_mission', { p_child_id: child.id, p_mission_id: mission.id, p_request_id: crypto.randomUUID() }).then(unwrap), mission.name + ' completed.', undefined, true)}>{done ? '✓ Done' : completed.length ? '+ Again!' : '+ I did it!'}</button>{latest && <button className="undo-button" disabled={data.pending} onClick={() => mutate('undo-' + latest.id, () => data.client.rpc('undo_completion', { p_completion_id: latest.id, p_request_id: crypto.randomUUID() }).then(unwrap), mission.name + ' undone.', undefined, true)}>Parent undo</button>}</div></li> })}</ul>}<p className="daily-note">Daily missions reset using your family timezone.</p></section><section className="reward-card"><p className="eyebrow">REWARD GOAL</p><div className="reward-art" aria-hidden="true">🎁</div><h2>{goal?.name || 'Pick a reward'}</h2>{goal ? <><p>{goal.star_cost} stars needed</p><div className="progress-label"><span>Progress</span><span>{Math.min(balance, goal.star_cost)} of {goal.star_cost}</span></div><progress value={Math.min(balance, goal.star_cost)} max={goal.star_cost} /></> : <><p>Add a goal your little star can look forward to.</p><button className="complete-button" onClick={onRewards}>Go to Rewards</button></>}</section></section></>
+  return <><section className="today-heading"><p className="eyebrow">TODAY</p><h2>{child.name}’s Stars <span aria-hidden="true">✨</span></h2><p>A little effort, a little magic.</p></section><section className="balance-card"><div><h2>Your star jar</h2><p className="balance"><strong>{balance}</strong><span>{balance === 1 ? 'star' : 'stars'} collected</span></p><p>Every little helping hand adds a little sparkle.</p></div><div className="star-art" aria-hidden="true"><span className="big-star">★</span></div></section><section className="today-stack"><section aria-labelledby="today-missions"><div className="section-heading"><h2 id="today-missions">Today’s little missions</h2></div>{!active.length ? <p className="empty-missions">No missions for Today yet.</p> : <ul className="chore-list">{active.map((mission) => { const completed = events.filter((event) => event.mission_id === mission.id && event.completed_on === today && !event.undone_at); const latest = completed[0]; const done = mission.frequency === 'once_daily' && completed.length > 0; return <li className={'chore-card ' + (done ? 'is-done' : '')} key={mission.id}><span className="chore-icon" aria-hidden="true">{missionIcon(mission)}</span><div className="chore-detail"><h3>{mission.name}</h3><p>★ {mission.stars} stars · {mission.frequency === 'once_daily' ? 'Once daily' : 'Repeatable'}</p>{completed.length > 0 && <p>{completed.length} completed today</p>}</div><div className="chore-actions"><button className="complete-button" disabled={data.pending || done} onClick={() => mutate('award-' + mission.id, () => data.client.rpc('award_mission', { p_child_id: child.id, p_mission_id: mission.id, p_request_id: crypto.randomUUID() }).then(unwrap), mission.name + ' completed.', undefined, true)}>{done ? '✓ Done' : completed.length ? '+ Again!' : '+ I did it!'}</button>{latest && <button className="undo-button" disabled={data.pending} onClick={() => mutate('undo-' + latest.id, () => data.client.rpc('undo_completion', { p_completion_id: latest.id, p_request_id: crypto.randomUUID() }).then(unwrap), mission.name + ' undone.', undefined, true)}>Parent undo</button>}</div></li> })}</ul>}<p className="daily-note">Daily missions reset using your family timezone.</p></section><section className="reward-card"><p className="eyebrow">REWARD GOAL</p><div className="reward-art" aria-hidden="true">🎁</div><h2>{goal?.name || 'Pick a reward'}</h2>{goal ? <><p>{goal.star_cost} stars needed</p><div className="progress-label"><span>Progress</span><span>{Math.min(balance, goal.star_cost)} of {goal.star_cost}</span></div><progress value={Math.min(balance, goal.star_cost)} max={goal.star_cost} /></> : <><p>Add a goal your little star can look forward to.</p><button className="complete-button" onClick={onRewards}>Go to Rewards</button></>}</section></section></>
 }
 
 function copyText(value) {
@@ -90,83 +107,87 @@ function copyText(value) {
 }
 
 function InviteParent({ client, familyId }) {
-  const [parentId, setParentId] = useState(''); const [link, setLink] = useState(''); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false)
-  async function invite(event) {
-    event.preventDefault(); const id = parentId.trim()
-    if (!isUuid(id)) { setError('Enter the other parent’s Parent ID: a full UUID.'); return }
+  const [invite, setInvite] = useState(null)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function createInvite() {
     setBusy(true); setError(''); setMessage('')
     try {
-      const invitationId = unwrap(await client.rpc('invite_parent', { p_family_id: familyId, p_parent_id: id }))
-      setLink(invitationLink(window.location.origin, window.location.pathname, invitationId))
+      const result = unwrap(await client.rpc('create_household_invite', { p_family_id: familyId, p_request_id: crypto.randomUUID() }))
+      const row = Array.isArray(result) ? result[0] : result
+      if (!row?.invite_token || !row?.invitation_id) throw new Error('The invitation could not be created. Please try again.')
+      setInvite({ id: row.invitation_id, link: invitationLink(window.location.origin, window.location.pathname, row.invite_token), expiresAt: row.expires_at })
       setMessage('Invitation link created.')
     } catch (problem) { setError(problem.message) } finally { setBusy(false) }
   }
-  return <article className="settings-card"><h3>Invite another parent</h3><p>Ask the other parent for their Parent ID. They must have their own signed-in account.</p><form className="settings-form" onSubmit={invite}><label htmlFor="invited-parent-id">Other parent’s Parent ID</label><input id="invited-parent-id" value={parentId} onChange={(event) => setParentId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" /><button className="complete-button" disabled={busy}>{busy ? 'Creating link…' : 'Create invitation link'}</button></form>{error && <p className="form-error" role="alert">{error}</p>}{link && <div className="invitation-link"><label htmlFor="invitation-link">Invitation link</label><input id="invitation-link" value={link} readOnly /><button className="edit-button" onClick={() => copyText(link).then(() => setMessage('Invitation link copied.')).catch((problem) => setError(problem.message))}>Copy link</button><p className="field-hint">Create the link from the deployed Pages site, not localhost. The invited parent signs into their own account first, then opens it.</p></div>}{message && <p className="announcement" role="status">{message}</p>}</article>
+
+  async function revokeInvite() {
+    if (!invite) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      unwrap(await client.rpc('revoke_household_invite', { p_invitation_id: invite.id }))
+      setInvite(null); setMessage('Invitation link revoked.')
+    } catch (problem) { setError(problem.message) } finally { setBusy(false) }
+  }
+
+  return <article className="settings-card"><h3>Invite another parent</h3><p>Create a private link for the other parent. They can sign in or create their own account, then join your family.</p><button className="complete-button" disabled={busy} onClick={createInvite}>{busy ? 'Creating link…' : 'Create invitation link'}</button>{error && <p className="form-error" role="alert">{error}</p>}{invite && <div className="invitation-link"><label htmlFor="invitation-link">Private invitation link</label><input id="invitation-link" value={invite.link} readOnly /><button className="edit-button" onClick={() => copyText(invite.link).then(() => setMessage('Invitation link copied.')).catch((problem) => setError(problem.message))}>Copy link</button><button className="edit-button" disabled={busy} onClick={revokeInvite}>Revoke link</button><p className="field-hint">Send this link privately. It expires {formatTime(invite.expiresAt)} and can only be used once.</p></div>}{message && <p className="announcement" role="status">{message}</p>}</article>
 }
 
 function Settings({ family, user, membership, client, onSignOut }) {
-  const [copyMessage, setCopyMessage] = useState('')
-  return <section className="settings-page"><p className="eyebrow">SETTINGS</p><h2>Family settings</h2><article className="settings-card"><h3>{family.name}</h3><p><strong>Timezone:</strong> {family.time_zone}</p><p className="field-hint">Timezone changes are planned for a later update.</p></article><article className="settings-card"><h3>Signed-in parent</h3><p>{user.email}</p><p><strong>Parent ID:</strong></p><input className="parent-id" value={user.id} readOnly aria-label="Your Parent ID" /><button className="edit-button" onClick={() => copyText(user.id).then(() => setCopyMessage('Parent ID copied.')).catch((problem) => setCopyMessage(problem.message))}>Copy Parent ID</button><p className="field-hint">Share this ID only with your family owner so they can invite you.</p>{copyMessage && <p className="announcement" role="status">{copyMessage}</p>}<p className="sync-indicator">● Connected</p><button className="edit-button" onClick={onSignOut}>Sign out</button></article>{isOwnerRole(membership.role) && <InviteParent client={client} familyId={family.id} />}</section>
+  return <section className="settings-page"><p className="eyebrow">SETTINGS</p><h2>Family settings</h2><article className="settings-card"><h3>{family.name}</h3><p><strong>Timezone:</strong> {family.time_zone}</p><p className="field-hint">Timezone changes are planned for a later update.</p></article><article className="settings-card"><h3>Signed-in parent</h3><p>{user.email}</p><p className="field-hint">Your account is connected to this family.</p><p className="sync-indicator">● Connected</p><button className="edit-button" onClick={onSignOut}>Sign out</button></article>{isOwnerRole(membership.role) && <InviteParent client={client} familyId={family.id} />}</section>
 }
 
-function InvitationAcceptance({ client, invitationId, onAccepted, onDismiss }) {
+function InvitationAcceptance({ client, user, onSignOut, token, onAccepted, onDismiss }) {
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
-  if (!isUuid(invitationId)) return <section className="shared-panel onboarding-panel" role="alert"><p className="eyebrow">FAMILY INVITATION</p><h2>This invitation link is invalid.</h2><p className="section-description">Ask the family owner for a new invitation link.</p><button className="edit-button" onClick={onDismiss}>Continue</button></section>
   async function accept() {
     setBusy(true); setError('')
-    try { unwrap(await client.rpc('accept_parent_invitation', { p_invitation_id: invitationId })); onAccepted() }
-    catch (problem) {
-      const message = problem.message || 'Invitation unavailable.'
-      setError(/expired/i.test(message) ? 'This invitation has expired.' : /unavailable|denied|permission/i.test(message) ? 'This invitation is invalid or belongs to a different parent.' : message)
-    } finally { setBusy(false) }
+    try { unwrap(await client.rpc('claim_household_invite', { p_token: token })); clearPendingInvite(); onAccepted() }
+    catch (problem) { setError(problem.message || 'This invitation is unavailable.') } finally { setBusy(false) }
   }
-  return <section className="shared-panel onboarding-panel" aria-labelledby="accept-invitation-title"><p className="eyebrow">FAMILY INVITATION</p><h2 id="accept-invitation-title">Join this family?</h2><p className="section-description">You are signed in. Accepting adds this account as a parent in the invited family.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="edit-button" disabled={busy} onClick={onDismiss}>Not now</button><button className="manage-button" disabled={busy} onClick={accept}>{busy ? 'Joining…' : 'Accept invitation'}</button></div></section>
+  return <section className="shared-panel onboarding-panel" aria-labelledby="accept-invitation-title"><p className="eyebrow">FAMILY INVITATION</p><h2 id="accept-invitation-title">Join this family?</h2><p className="section-description">Signed in as {user.email}. Joining shares this family’s children, missions, rewards, and star history with your account.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="edit-button" disabled={busy} onClick={onSignOut}>Use another account</button><button className="edit-button" disabled={busy} onClick={onDismiss}>Not now</button><button className="manage-button" disabled={busy} onClick={accept}>{busy ? 'Joining…' : 'Join family'}</button></div></section>
 }
 
-function FamilyPicker({ client, memberships, onChoose }) {
-  const [families, setFamilies] = useState([]); const [error, setError] = useState('')
-  useEffect(() => {
-    let active = true
-    Promise.all(memberships.map(async (membership) => {
-      const response = await client.from('families').select('id, name').eq('id', membership.family_id).single()
-      return { ...membership, family: unwrap(response) }
-    })).then((items) => { if (active) setFamilies(items) }).catch((problem) => { if (active) setError('Your families could not be loaded: ' + problem.message) })
-    return () => { active = false }
-  }, [client, memberships])
-  return <section className="shared-panel onboarding-panel" aria-labelledby="family-picker-title"><p className="eyebrow">OUR LITTLE STAR</p><h2 id="family-picker-title">Choose a family</h2><p className="section-description">This account belongs to more than one family. Choose the one you want to use now.</p>{error && <p className="form-error" role="alert">{error}</p>}{!families.length && !error ? <p role="status">Loading families…</p> : <div className="family-picker-list">{families.map((membership) => <button className="settings-card family-choice" key={membership.family_id} onClick={() => onChoose(membership.family_id)}><strong>{membership.family.name}</strong><span>{membership.role === 'owner' ? 'Owner' : 'Parent'}</span></button>)}</div>}</section>
+function NoHousehold({ userId, client, onComplete }) {
+  return <section className="onboarding-panel"><section className="settings-card"><h2>Join your family</h2><p>Open the private invitation link from your family owner to join their family.</p></section><details className="settings-card"><summary>Starting a brand-new family instead?</summary><Onboarding client={client} userId={userId} onComplete={onComplete} /></details></section>
 }
+
 export default function SharedFamilyData({ client, user, onSignOut }) {
-  const [state, setState] = useState({ status: 'loading', data: null, error: '' }); const [notice, setNotice] = useState(''); const [a11yNotice, setA11yNotice] = useState(''); const [pending, setPending] = useState(false); const [online, setOnline] = useState(() => navigator.onLine); const [selectedChildId, setSelectedChildId] = useState(''); const [selectedFamilyId, setSelectedFamilyId] = useState(''); const [page, setPage] = useState('today'); const [invitationId, setInvitationId] = useState(() => invitationIdFromSearch(window.location.search) ?? new URLSearchParams(window.location.search).get('invite'))
-  const load = useCallback(async (showLoading = true, requestedFamilyId = selectedFamilyId) => {
+  const [deletedMissionIds, setDeletedMissionIds] = useState([])
+  const [state, setState] = useState({ status: 'loading', data: null, error: '' })
+  const [notice, setNotice] = useState(''); const [a11yNotice, setA11yNotice] = useState(''); const [pending, setPending] = useState(false); const [online, setOnline] = useState(() => navigator.onLine); const [selectedChildId, setSelectedChildId] = useState(''); const [page, setPage] = useState('today')
+  const [inviteToken, setInviteToken] = useState(() => { const token = inviteTokenFromSearch(window.location.search); if (token) savePendingInvite(token); return token || readPendingInvite() })
+  const load = useCallback(async (showLoading = true) => {
     if (showLoading) setState({ status: 'loading', data: null, error: '' })
     try {
       const memberships = unwrap(await client.from('family_memberships').select('family_id, role, joined_at').order('joined_at'))
       if (!memberships.length) { setState({ status: 'onboarding', data: null, error: '' }); return }
-      if (memberships.length > 1 && !requestedFamilyId) { setState({ status: 'choose-family', data: { memberships }, error: '' }); return }
-      const membership = memberships.find((item) => item.family_id === requestedFamilyId) || memberships[0]
-      if (!membership) { setState({ status: 'error', data: null, error: 'The selected family is unavailable.' }); return }
-      const id = membership.family_id
-      const responses = await Promise.all([client.from('families').select('id, name, time_zone').eq('id', id).single(), client.from('children').select('id, name, selected_reward_id, archived_at').eq('family_id', id).order('created_at'), client.from('missions').select('id, name, emoji, stars, frequency, archived_at').eq('family_id', id).order('created_at'), client.from('rewards').select('id, name, star_cost, archived_at').eq('family_id', id).order('created_at'), client.from('mission_completions').select('id, child_id, mission_id, completed_at, completed_on, mission_name_snapshot, emoji_snapshot, stars_earned, undone_at').eq('family_id', id).order('completed_at', { ascending: false }), client.from('reward_redemptions').select('id, child_id, redeemed_at, reward_name_snapshot, stars_spent').eq('family_id', id).order('redeemed_at', { ascending: false }), client.from('child_star_balances').select('child_id, balance').eq('family_id', id)])
+      if (memberships.length > 1) { setState({ status: 'error', data: null, error: 'This account has more than one active household. Please contact support before continuing.' }); return }
+      const membership = memberships[0]; const id = membership.family_id
+      const responses = await Promise.all([client.from('families').select('id, name, time_zone').eq('id', id).single(), client.from('children').select('id, name, selected_reward_id, archived_at').eq('family_id', id).order('created_at'), client.from('missions').select('id, name, icon_key, stars, frequency, repeat_cooldown_seconds, archived_at, sort_order').eq('family_id', id).order('sort_order').order('created_at').order('id'), client.from('rewards').select('id, name, star_cost, archived_at').eq('family_id', id).order('created_at'), client.from('mission_completions').select('id, child_id, mission_id, completed_at, completed_on, mission_name_snapshot, icon_key_snapshot, emoji_snapshot, stars_earned, undone_at').eq('family_id', id).order('completed_at', { ascending: false }), client.from('reward_redemptions').select('id, child_id, redeemed_at, reward_name_snapshot, stars_spent').eq('family_id', id).order('redeemed_at', { ascending: false }), client.from('child_star_balances').select('child_id, balance').eq('family_id', id)])
       setState({ status: 'ready', error: '', data: { client, membership, family: unwrap(responses[0]), children: unwrap(responses[1]), missions: unwrap(responses[2]), rewards: unwrap(responses[3]), completions: unwrap(responses[4]), redemptions: unwrap(responses[5]), balances: unwrap(responses[6]) } })
     } catch (problem) { setState({ status: 'error', data: null, error: 'Family data could not be loaded: ' + problem.message }) }
-  }, [client, selectedFamilyId])
+  }, [client])
   useEffect(() => { const timer = window.setTimeout(() => { void load(false) }, 0); return () => window.clearTimeout(timer) }, [load])
   useEffect(() => { const update = () => setOnline(navigator.onLine); window.addEventListener('online', update); window.addEventListener('offline', update); return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) } }, [])
   async function mutate(key, action, success, after, announceOnly = false) { if (pending) return; if (!online) { setState((current) => ({ ...current, error: 'You appear to be offline. Reconnect and try again.' })); return } setPending(true); setNotice(''); setA11yNotice(''); try { await action(); await load(false); if (announceOnly) setA11yNotice(success); else setNotice(success); after?.() } catch (problem) { setState((current) => ({ ...current, error: problem.message })) } finally { setPending(false) } }
-  function dismissInvitation() { window.history.replaceState({}, '', window.location.pathname); setInvitationId(null) }
-  function invitationAccepted() { dismissInvitation(); setSelectedFamilyId(''); setPage('today'); void load() }
-  if (invitationId) return <InvitationAcceptance client={client} invitationId={invitationId} onDismiss={dismissInvitation} onAccepted={invitationAccepted} />
+  async function removeMission(mission) {
+    setDeletedMissionIds((ids) => [...ids, mission.id])
+    try { await softDeleteMission(client, mission.id) }
+    catch (problem) { setDeletedMissionIds((ids) => ids.filter((id) => id !== mission.id)); throw problem }
+    void load(false)
+  }
+  function dismissInvitation() { clearPendingInvite(); window.history.replaceState({}, '', window.location.pathname); setInviteToken(null) }
+  function invitationAccepted() { dismissInvitation(); setSelectedChildId(''); setPage('today'); void load(true) }
+  if (inviteToken) return <InvitationAcceptance client={client} user={user} onSignOut={onSignOut} token={inviteToken} onDismiss={dismissInvitation} onAccepted={invitationAccepted} />
   if (state.status === 'loading') return <section className="shared-panel" aria-live="polite"><p className="eyebrow">OUR LITTLE STAR</p><p>Loading your family…</p></section>
-  if (state.status === 'onboarding') return <Onboarding client={client} userId={user.id} onComplete={load} />
-  if (state.status === 'choose-family') return <FamilyPicker client={client} memberships={state.data.memberships} onChoose={(familyId) => { setSelectedFamilyId(familyId); void load(true, familyId) }} />
+  if (state.status === 'onboarding') return <NoHousehold userId={user.id} client={client} onComplete={load} />
   if (state.status === 'error' && !state.data) return <section className="shared-panel" role="alert"><p className="eyebrow">OUR LITTLE STAR</p><p>{state.error}</p><button className="edit-button" onClick={() => load()}>Try again</button></section>
-  const data = state.data; const children = data.children.filter((item) => !item.archived_at); const child = children.find((item) => item.id === selectedChildId) || children[0]; const balance = child ? Number(data.balances.find((item) => item.child_id === child.id)?.balance || 0) : 0; const view = { ...data, pending, setError: (problem) => setState((current) => ({ ...current, error: problem.message || String(problem) })) }
-  const timeline = child ? [
-    ...data.completions.filter((event) => event.child_id === child.id).map((event) => ({ ...event, type: 'mission', timestamp: event.undone_at || event.completed_at })),
-    ...data.redemptions.filter((event) => event.child_id === child.id).map((event) => ({ ...event, type: 'redemption', timestamp: event.redeemed_at })),
-  ].sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp)) : []
-  const history = child && <section className="history-page"><p className="eyebrow">HISTORY</p><h2>Family activity</h2>{!timeline.length ? <p className="empty-missions">No activity yet.</p> : <ul className="history">{timeline.map((event) => event.type === 'mission' ? <li key={'mission-' + event.id}><div><strong><span aria-hidden="true">{event.emoji_snapshot} </span>{event.mission_name_snapshot}</strong><p>{event.undone_at ? 'Mission undone' : event.stars_earned + ' stars earned'} · {formatTime(event.timestamp)}</p></div></li> : <li key={'redemption-' + event.id}><div><strong>{event.reward_name_snapshot}</strong><p>{event.stars_spent} stars spent · {formatTime(event.timestamp)}</p></div></li>)}</ul>}</section>
-  const content = !child ? <p className="empty-missions">This family has no active child yet.</p> : page === 'today' ? <Today data={view} mutate={mutate} child={child} balance={balance} timeZone={data.family.time_zone} onRewards={() => setPage('rewards')} /> : page === 'missions' ? <MissionManager data={view} mutate={mutate} /> : page === 'rewards' ? <RewardManager data={view} mutate={mutate} child={child} balance={balance} /> : page === 'history' ? history : <Settings family={data.family} membership={data.membership} user={user} client={client} onSignOut={onSignOut} />
+  const data = state.data; const children = data.children.filter((item) => !item.archived_at); const child = children.find((item) => item.id === selectedChildId) || children[0]; const balance = child ? Number(data.balances.find((item) => item.child_id === child.id)?.balance || 0) : 0; const view = { ...data, missions: data.missions.filter((mission) => !deletedMissionIds.includes(mission.id)), pending, setError: (problem) => setState((current) => ({ ...current, error: problem.message || String(problem) })) }
+  const timeline = child ? [...data.completions.filter((event) => event.child_id === child.id).map((event) => ({ ...event, type: 'mission', timestamp: event.undone_at || event.completed_at })), ...data.redemptions.filter((event) => event.child_id === child.id).map((event) => ({ ...event, type: 'redemption', timestamp: event.redeemed_at }))].sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp)) : []
+  const history = child && <section className="history-page"><p className="eyebrow">HISTORY</p><h2>Family activity</h2>{!timeline.length ? <p className="empty-missions">No activity yet.</p> : <ul className="history">{timeline.map((event) => event.type === 'mission' ? <li key={'mission-' + event.id}><div><strong><span aria-hidden="true">{completionIcon(event)} </span>{event.mission_name_snapshot}</strong><p>{event.undone_at ? 'Mission undone' : event.stars_earned + ' stars earned'} · {formatTime(event.timestamp)}</p></div></li> : <li key={'redemption-' + event.id}><div><strong>{event.reward_name_snapshot}</strong><p>{event.stars_spent} stars spent · {formatTime(event.timestamp)}</p></div></li>)}</ul>}</section>
+  const content = page === 'settings' ? <Settings family={data.family} membership={data.membership} user={user} client={client} onSignOut={onSignOut} /> : !child ? <p className="empty-missions">This family has no active child yet.</p> : page === 'today' ? <Today data={view} mutate={mutate} child={child} balance={balance} timeZone={data.family.time_zone} onRewards={() => setPage('rewards')} /> : page === 'missions' ? <MissionManager data={view} mutate={mutate} onDeleteMission={removeMission} /> : page === 'rewards' ? <RewardManager data={view} mutate={mutate} child={child} balance={balance} /> : page === 'history' ? history : <Settings family={data.family} membership={data.membership} user={user} client={client} onSignOut={onSignOut} />
   const nav = [['today', 'Today'], ['missions', 'Missions'], ['rewards', 'Rewards'], ['history', 'History'], ['settings', 'Settings']]
   return <section className="family-app" aria-labelledby="family-app-title"><header className="family-header"><div className="brand"><span className="brand-star" aria-hidden="true">★</span><div><h1 id="family-app-title">Our Little Star</h1><p className="brand-subtitle">{data.family.name}</p></div></div><button className="edit-button" disabled={pending} onClick={() => load()}>Refresh</button></header><nav className="family-nav" aria-label="Family app">{nav.map(([id, label]) => <button key={id} aria-current={page === id ? 'page' : undefined} className={page === id ? 'active' : ''} onClick={() => setPage(id)}>{label}</button>)}</nav>{children.length > 1 && <div className="shared-child-select"><label htmlFor="shared-child-select">Viewing stars for</label><select id="shared-child-select" value={child?.id || ''} onChange={(event) => setSelectedChildId(event.target.value)}>{children.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>}{!online && <p className="storage-warning" role="status">You’re offline. Reconnect before making changes.</p>}{state.error && <p className="form-error" role="alert">{state.error}</p>}{notice && <p className="announcement" role="status">{notice}</p>}<p className="sr-only" aria-live="polite">{a11yNotice}</p><main className="family-content">{content}</main></section>
 }

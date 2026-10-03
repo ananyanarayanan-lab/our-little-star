@@ -1,23 +1,32 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { invitationIdFromSearch, invitationLink, isOwnerRole, isUuid } from '../src/invitations.js'
+import { readFile } from 'node:fs/promises'
+import { invitationLink, inviteTokenFromSearch, isOwnerRole } from '../src/invitations.js'
 
-const invitationId = 'e5c2d4a1-8c0f-4f25-9bf2-1da69d6cf7f5'
+const token = 'v3PLOHRFZwpbTGwuMMFh7PmhQ_CDiMcPmG5Vgw0qgGw'
 
-test('invitation links contain only a valid invitation ID', () => {
-  const link = invitationLink('https://example.test', '/family', invitationId)
-  assert.equal(link, 'https://example.test/family?invite=' + invitationId)
-  assert.equal(invitationIdFromSearch(new URL(link).search), invitationId)
-  assert.throws(() => invitationLink('https://example.test', '/', 'not-an-id'))
+test('opaque invitation links contain a token, never a household or parent identifier', () => {
+  const link = invitationLink('https://example.test', '/our-little-star/', token)
+  const parsed = new URL(link)
+  assert.equal(parsed.pathname, '/our-little-star/')
+  assert.equal(inviteTokenFromSearch(parsed.search), token)
+  assert.equal(parsed.searchParams.get('family'), null)
+  assert.throws(() => invitationLink('https://example.test', '/', 'not-a-secure-token'))
 })
 
-test('invalid invitation query values are rejected', () => {
-  assert.equal(isUuid(invitationId), true)
-  assert.equal(invitationIdFromSearch('?invite=not-a-uuid'), null)
-  assert.equal(invitationIdFromSearch('?other=value'), null)
+test('only a correctly shaped opaque invitation token is accepted from a link', () => {
+  assert.equal(inviteTokenFromSearch('?invite=' + token), token)
+  assert.equal(inviteTokenFromSearch('?invite=not-a-token'), null)
+  assert.equal(inviteTokenFromSearch('?family=' + token), null)
 })
 
-test('owner visibility is determined only by the membership role returned by Supabase', () => {
+test('owner visibility comes from the membership role returned by Supabase', () => {
   assert.equal(isOwnerRole('owner'), true)
   assert.equal(isOwnerRole('parent'), false)
+})
+
+test('source code contains no legacy invitation RPC calls', async () => {
+  const source = await readFile(new URL('../src/SharedFamilyData.jsx', import.meta.url), 'utf8')
+  assert.equal(source.includes('invite_parent'), false)
+  assert.equal(source.includes('accept_parent_invitation'), false)
 })

@@ -221,3 +221,8 @@ footer p { font-size: 10px; margin-top: 5px; }
 .prototype-label { margin-top: 34px; color: #68725d; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; }
 @media (max-width: 600px) { .shared-panel, .local-only-banner { padding: 18px; } .shared-columns { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .auth-card { padding: 24px 18px; } .signed-in-bar { align-items: flex-start; } }
+
+.mission-delete-action { color: #b42318; }
+.mission-delete-confirm { background: #b42318; color: #fff; }
+.mission-delete-dialog { position: fixed; inset: 0; margin: auto; width: min(90vw, 380px); }
+.mission-delete-dialog::backdrop { background: #0b2f5788; }

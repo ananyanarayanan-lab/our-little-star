@@ -26,3 +26,8 @@ dist-ssr
 *.sw?
 
 supabase/.temp/
+
+# Local release checks and agent configuration
+.release-audit/
+.claude/
+supabase/release-reconciliation-*.sql

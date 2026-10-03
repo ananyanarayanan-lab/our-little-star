@@ -9,6 +9,7 @@ import { readName } from './settings'
 import AuthScreen from './AuthScreen'
 import { supabase, supabaseConfig, supabaseSetupMessage } from './supabase'
 import SharedFamilyData from './SharedFamilyData'
+import { inviteTokenFromSearch, savePendingInvite } from './invitations'
 
 function App() {
   const [auth, setAuth] = useState(() => ({ loading: Boolean(supabase), session: null }))
@@ -24,6 +25,11 @@ function App() {
   const [managing, setManaging] = useState(false)
   const manageButton = useRef(null)
   const rewardsButton = useRef(null)
+
+  useEffect(() => {
+    const token = inviteTokenFromSearch(window.location.search)
+    if (token) savePendingInvite(token)
+  }, [])
 
   useEffect(() => {
     if (!supabase) {

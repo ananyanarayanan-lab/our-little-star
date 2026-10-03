@@ -30,7 +30,7 @@ export default function AuthScreen({ client }) {
     const email = form.email.trim()
     try {
       const result = mode === 'sign-up'
-        ? await client.auth.signUp({ email, password: form.password })
+        ? await client.auth.signUp({ email, password: form.password, options: { emailRedirectTo: window.location.href } })
         : await client.auth.signInWithPassword({ email, password: form.password })
       if (result.error) {
         setError(readableAuthError(result.error))
@@ -54,7 +54,7 @@ export default function AuthScreen({ client }) {
       <span className="brand-star" aria-hidden="true">★</span>
       <p className="eyebrow">PARENT AREA</p>
       <h1 id="auth-title">Our Little Star</h1>
-      <p className="auth-intro">Sign in to open your family’s local prototype.</p>
+      <p className="auth-intro">Sign in to open your family stars. Invited parents can join without creating a family.</p>
       <div className="auth-tabs" role="tablist" aria-label="Account action">
         <button type="button" role="tab" aria-selected={mode === 'sign-in'} onClick={() => switchMode('sign-in')}>Sign in</button>
         <button type="button" role="tab" aria-selected={mode === 'sign-up'} onClick={() => switchMode('sign-up')}>Sign up</button>
@@ -68,7 +68,7 @@ export default function AuthScreen({ client }) {
         {message && <p className="auth-success" role="status">{message}</p>}
         <button className="manage-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'sign-up' ? 'Create account' : 'Sign in'}</button>
       </form>
-      <p className="field-hint">Family data still stays in this browser for now. Database syncing comes next.</p>
+      <p className="field-hint">Have an invitation? Open its link, then sign in or create your own account. Your invitation will be ready after you sign in.</p>
     </section>
   </main>
 }

@@ -52,11 +52,13 @@ select set_config('test.child',id::text,true) from c;
 select pg_temp.check_true((select count(*) = 0 from public.missions), 'no automatically assigned missions');
 with m as (insert into public.missions(family_id,name,stars,frequency) values(current_setting('test.family')::uuid,'Brush teeth',2,'once_daily') returning id)
 select set_config('test.daily',id::text,true) from m;
-with m as (insert into public.missions(family_id,name,stars,frequency) values(current_setting('test.family')::uuid,'Help out',3,'repeatable') returning id)
+with m as (insert into public.missions(family_id,name,stars,frequency,repeat_cooldown_seconds) values(current_setting('test.family')::uuid,'Help out',3,'repeatable',60) returning id)
 select set_config('test.repeat',id::text,true) from m;
+with m as (insert into public.missions(family_id,name,stars,frequency) values(current_setting('test.family')::uuid,'Cooldown task',1,'repeatable') returning id)
+select set_config('test.cooldown',id::text,true) from m;
 with r as (insert into public.rewards(family_id,name,star_cost) values(current_setting('test.family')::uuid,'Toy',5) returning id)
 select set_config('test.reward',id::text,true) from r;
-select pg_temp.check_true((select emoji = '⭐' from public.missions where id = current_setting('test.daily')::uuid), 'emoji default');
+select pg_temp.check_true((select emoji is null and icon_key = 'star' from public.missions where id = current_setting('test.daily')::uuid), 'new missions use only stable icon keys');
 select pg_temp.expect_error($q$insert into public.missions(family_id,name,stars,frequency) values(current_setting('test.family')::uuid,'Bad',0,'once_daily')$q$,'23514');
 select pg_temp.expect_error($q$insert into public.rewards(family_id,name,star_cost) values(current_setting('test.family')::uuid,'Bad',-1)$q$,'23514');
 select pg_temp.expect_error($q$insert into public.family_memberships(family_id,parent_id,role) values(current_setting('test.family')::uuid,auth.uid(),'owner')$q$,'42501');
@@ -65,6 +67,17 @@ select pg_temp.expect_error($q$update public.families set time_zone = 'UTC'$q$,'
 select pg_temp.expect_error($q$delete from public.missions$q$,'42501');
 select pg_temp.expect_error($q$update public.mission_completions set stars_earned = 99$q$,'42501');
 select pg_temp.expect_error($q$insert into public.reward_redemptions default values$q$,'42501');
+
+-- Legacy emoji writes are denied even if an old client still sends them.
+select pg_temp.expect_error($q$insert into public.missions(family_id,name,stars,frequency,emoji) values(current_setting('test.family')::uuid,'Old client',1,'repeatable','legacy')$q$,'42501');
+select pg_temp.expect_error($q$update public.missions set emoji='legacy' where id=current_setting('test.daily')::uuid$q$,'42501');
+-- Custom mission fields and cooldown boundaries are enforced in the database.
+select pg_temp.expect_error($q$update public.missions set repeat_cooldown_seconds=0 where id=current_setting('test.cooldown')::uuid$q$,'23514');
+select pg_temp.expect_error($q$update public.missions set repeat_cooldown_seconds=43201 where id=current_setting('test.cooldown')::uuid$q$,'23514');
+select pg_temp.expect_error($q$update public.missions set icon_key='unknown' where id=current_setting('test.cooldown')::uuid$q$,'23514');
+select pg_temp.expect_error($q$update public.missions set name=repeat('x',81) where id=current_setting('test.cooldown')::uuid$q$,'23514');
+update public.missions set icon_key='book',repeat_cooldown_seconds=43200 where id=current_setting('test.cooldown')::uuid;
+select pg_temp.check_true((select icon_key='book' and repeat_cooldown_seconds=43200 from public.missions where id=current_setting('test.cooldown')::uuid),'custom mission fields persist');
 
 -- Owner-targeted invitation; knowing the invitation/family ID is not enough.
 select set_config('test.invite',public.invite_parent(current_setting('test.family')::uuid,'10000000-0000-4000-8000-000000000002')::text,true);
@@ -95,28 +108,47 @@ select pg_temp.expect_error($q$select public.award_mission(current_setting('test
 -- Award, exact retry, duplicate daily request, family date, and snapshot preservation.
 select set_config('test.event',public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,'30000000-0000-4000-8000-000000000001')::text,true);
 select pg_temp.check_true(public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,'30000000-0000-4000-8000-000000000001')::text = current_setting('test.event'),'award retry');
-select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())$q$,'P0001','already completed');
+select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())$q$,'P0001','ready again shortly');
 select pg_temp.check_true((select completed_on = (completed_at at time zone 'America/New_York')::date and time_zone_snapshot = 'America/New_York' and recorded_by = auth.uid() from public.mission_completions where id = current_setting('test.event')::uuid),'family timezone and actor');
--- A different parent/device cannot award the same child/mission again that family day.
+-- A different parent/device cannot bypass the server-side cooldown.
 select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 set local time zone 'Asia/Tokyo';
-select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())$q$,'P0001','already completed');
+select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())$q$,'P0001','ready again shortly');
 select pg_temp.check_true((select time_zone='America/New_York' from public.families where id=current_setting('test.family')::uuid),'family zone independent of session zone');
 set local time zone 'UTC';
 select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
-update public.missions set stars=9,name='New name',emoji='🪥' where id=current_setting('test.daily')::uuid;
-select pg_temp.check_true((select stars_earned=2 and mission_name_snapshot='Brush teeth' and emoji_snapshot='⭐' from public.mission_completions where id=current_setting('test.event')::uuid),'historical amount/name/emoji unchanged');
+update public.missions set stars=9,name='New name',icon_key='toothbrush' where id=current_setting('test.daily')::uuid;
+select pg_temp.check_true((select stars_earned=2 and mission_name_snapshot='Brush teeth' and emoji_snapshot is null and icon_key_snapshot='star' from public.mission_completions where id=current_setting('test.event')::uuid),'award keeps original key snapshot after mission edit without persisting emoji');
 select public.undo_completion(current_setting('test.event')::uuid,'40000000-0000-4000-8000-000000000001');
 select public.undo_completion(current_setting('test.event')::uuid,'40000000-0000-4000-8000-000000000001');
 select pg_temp.check_true((select balance=0 from public.child_star_balances where child_id=current_setting('test.child')::uuid),'undo once');
 select pg_temp.check_true((select undone_at is not null and undone_by=auth.uid() and stars_earned=2 from public.mission_completions where id=current_setting('test.event')::uuid),'undo retains audit');
 select set_config('test.new_event',public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())::text,true);
 select public.award_mission(current_setting('test.child')::uuid,current_setting('test.repeat')::uuid,'30000000-0000-4000-8000-000000000002');
+reset role;
+update public.mission_completions set completed_at=clock_timestamp()-interval '13 hours' where mission_id=current_setting('test.repeat')::uuid;
+set local role authenticated;
 select public.award_mission(current_setting('test.child')::uuid,current_setting('test.repeat')::uuid,'30000000-0000-4000-8000-000000000003');
 select public.award_mission(current_setting('test.child')::uuid,current_setting('test.repeat')::uuid,'30000000-0000-4000-8000-000000000003');
 select pg_temp.check_true((select balance=15 from public.child_star_balances where child_id=current_setting('test.child')::uuid),'repeatable twice, retry once');
+-- Repeatable awards use a server-side cooldown; an exact request retry remains idempotent.
+select set_config('test.cooldown_event',public.award_mission(current_setting('test.child')::uuid,current_setting('test.cooldown')::uuid,'30000000-0000-4000-8000-000000000004')::text,true);
+select pg_temp.check_true(public.award_mission(current_setting('test.child')::uuid,current_setting('test.cooldown')::uuid,'30000000-0000-4000-8000-000000000004')::text=current_setting('test.cooldown_event'),'cooldown award retry');
+select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.cooldown')::uuid,gen_random_uuid())$q$,'P0001','ready again shortly');
+select public.undo_completion(current_setting('test.cooldown_event')::uuid,'40000000-0000-4000-8000-000000000004');
+update public.missions set repeat_cooldown_seconds=60 where id=current_setting('test.cooldown')::uuid;
+select set_config('test.cooldown_ready_event',public.award_mission(current_setting('test.child')::uuid,current_setting('test.cooldown')::uuid,'30000000-0000-4000-8000-000000000005')::text,true);
+select public.undo_completion(current_setting('test.cooldown_ready_event')::uuid,'40000000-0000-4000-8000-000000000005');
+select pg_temp.check_true((select balance=15 from public.child_star_balances where child_id=current_setting('test.child')::uuid),'cooldown checks preserve ledger balance');
 update public.missions set frequency='once_daily' where id=current_setting('test.repeat')::uuid;
-select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.repeat')::uuid,gen_random_uuid())$q$,'P0001','already completed');
+select pg_temp.check_true((select repeat_cooldown_seconds=60 from public.missions where id=current_setting('test.repeat')::uuid),'cooldown remains configurable for every mission frequency');
+update public.missions set repeat_cooldown_seconds=60 where id=current_setting('test.daily')::uuid;
+reset role;
+update public.mission_completions set completed_at=clock_timestamp()-interval '13 hours' where mission_id=current_setting('test.daily')::uuid;
+set local role authenticated;
+select set_config('test.daily_cooldown_ready_event',public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,'30000000-0000-4000-8000-000000000006')::text,true);
+select public.undo_completion(current_setting('test.daily_cooldown_ready_event')::uuid,'40000000-0000-4000-8000-000000000006');
+select pg_temp.check_true((select balance=15 from public.child_star_balances where child_id=current_setting('test.child')::uuid),'once-daily mission also follows configurable cooldown');
 update public.missions set archived_at=now() where id=current_setting('test.daily')::uuid;
 select pg_temp.check_true((select balance=15 from public.child_star_balances where child_id=current_setting('test.child')::uuid),'archive preserves balance');
 select pg_temp.expect_error($q$select public.award_mission(current_setting('test.child')::uuid,current_setting('test.daily')::uuid,gen_random_uuid())$q$,'P0001','unavailable');
