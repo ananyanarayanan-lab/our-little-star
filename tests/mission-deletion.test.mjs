@@ -37,7 +37,7 @@ function component(name, dependencies = {}, syntaxTree = ast) {
   const globals = {
     ...primitives, useState, useRef, useEffect: () => {}, element, Fragment: 'Fragment',
     styles: {}, friendlyError, sortMissions, saveMissionOrder, moveMission, dragDestination, missionRowOffset, MISSION_ROW_HEIGHT, MISSION_ROW_STEP, missionIcon, missionIconOptions, missionVisualFields, softDeleteMission,
-    cooldownPresets: [60, 120, 300], shortActivityLabels: {},
+    cooldownPresets: [60, 120, 300], shortActivityLabels: {}, rewardIcons: { gift: '🎁', chocolate: '🍫', park: '🌳', toy: '🧸', trophy: '🏆' },
     useWindowDimensions: () => ({ width: 390, height: 844 }),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
     Animated: { Value: class { constructor(value) { this.value = value } }, View: 'AnimatedView' },

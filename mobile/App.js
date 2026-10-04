@@ -12,24 +12,33 @@ import * as Crypto from 'expo-crypto'
 import { configured, supabase } from './supabase'
 
 const colors = ['#F6C343', '#76CFF5', '#AEEFD7', '#F6A98C', '#9FA8E8']
+const rewardIconOptions = [
+  ['gift', '🎁', 'Gift'], ['chocolate', '🍫', 'Chocolate'], ['park', '🌳', 'Park'],
+  ['toy', '🧸', 'Toy'], ['trophy', '🏆', 'Trophy'], ['ice_cream', '🍦', 'Ice cream'],
+  ['movie', '🎬', 'Movie'], ['book', '📚', 'Books'], ['game', '🎮', 'Game'],
+  ['bike', '🚲', 'Bike'], ['balloon', '🎈', 'Balloon'], ['cookie', '🍪', 'Cookie'],
+]
+const rewardIcons = Object.fromEntries(rewardIconOptions.map(([key, emoji]) => [key, emoji]))
 const starterRewards = [
-  { name: 'Chocolate', starCost: 10 },
-  { name: 'Going to the park', starCost: 20 },
-  { name: 'Choose a toy', starCost: 30 },
-  { name: 'Big reward', starCost: 50 },
+  { name: 'Chocolate', starCost: 10, iconKey: 'chocolate' },
+  { name: 'Going to the park', starCost: 20, iconKey: 'park' },
+  { name: 'Choose a toy', starCost: 30, iconKey: 'toy' },
+  { name: 'Big reward', starCost: 50, iconKey: 'trophy' },
 ]
 
-function rewardPresentation(name) {
-  const key = String(name || '').trim().toLowerCase()
+function rewardPresentation(reward) {
+  const key = String(reward?.name || '').trim().toLowerCase()
+  const storedIcon = reward?.icon_key
+  if (storedIcon && storedIcon !== 'gift' && rewardIcons[storedIcon]) return { emoji: rewardIcons[storedIcon], description: 'A special reward to look forward to' }
   if (key === 'chocolate') return { emoji: '🍫', description: 'Pick a special chocolate treat' }
   if (key === 'going to the park') return { emoji: '🌳', description: 'Time for a fun park trip' }
   if (key === 'choose a toy') return { emoji: '🧸', description: 'Pick a toy you love' }
   if (key === 'big reward') return { emoji: '🏆', description: 'Something extra special' }
-  return { emoji: '🎁', description: 'A special reward to look forward to' }
+  return { emoji: rewardIcons.gift, description: 'A special reward to look forward to' }
 }
 
 function rewardDisplay(reward) {
-  return { ...reward, stars: Number(reward.star_cost), ...rewardPresentation(reward.name) }
+  return { ...reward, stars: Number(reward.star_cost), ...rewardPresentation(reward) }
 }
 
 function normalizeRewardDraft(name, starCost) {
@@ -349,7 +358,7 @@ function InviteParentSheet({ visible, familyId, onDismiss }) {
   </DraggableBottomSheet>
 }
 
-function ParentControlsSheet({ visible, family, members, children, currentUserId, isOwner, onInvite, onManageChildren, onManageMissions, onAddMission, onManageRewards, onReview, onSignOut, onDismiss }) {
+function ParentControlsSheet({ visible, family, members, children, currentUserId, isOwner, onInvite, onManageChildren, onManageMissions, onManageRewards, onReview, onSignOut, onDismiss }) {
   return <DraggableBottomSheet visible={visible} title="Parent controls" onDismiss={onDismiss}>
     <Text style={styles.parentSectionTitle}>Family</Text>
     <Text style={styles.parentHouseholdName}>{family?.name || 'Household not loaded'}</Text>
@@ -361,10 +370,9 @@ function ParentControlsSheet({ visible, family, members, children, currentUserId
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onManageChildren}><Text>Manage children</Text></Pressable>
     <Text style={styles.parentSectionTitle}>Missions</Text>
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onManageMissions}><Text>Manage missions</Text></Pressable>
-    <Pressable accessibilityRole="button" style={styles.secondary} onPress={onAddMission}><Text>Add mission</Text></Pressable>
+    <Pressable accessibilityRole="button" style={styles.secondary} onPress={onReview}><Text>Review today’s missions</Text></Pressable>
     <Text style={styles.parentSectionTitle}>Rewards</Text>
     <Pressable accessibilityRole="button" style={styles.secondary} onPress={onManageRewards}><Text>Manage rewards</Text></Pressable>
-    <Pressable accessibilityRole="button" style={styles.secondary} onPress={onReview}><Text>Review today’s missions</Text></Pressable>
     <Pressable accessibilityRole="button" style={styles.signOut} onPress={onSignOut}><Text>Sign out</Text></Pressable>
   </DraggableBottomSheet>
 }
@@ -411,6 +419,7 @@ function AddChildSheet({ visible, familyId, onSaved, onDismiss }) {
 function RewardEditorSheet({ visible, familyId, reward, onSaved, onDismiss }) {
   const [name, setName] = useState('')
   const [starCost, setStarCost] = useState('')
+  const [iconKey, setIconKey] = useState('gift')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -418,6 +427,7 @@ function RewardEditorSheet({ visible, familyId, reward, onSaved, onDismiss }) {
     if (!visible) return
     setName(reward?.name || '')
     setStarCost(reward ? String(reward.star_cost) : '')
+    setIconKey(reward?.icon_key && rewardIcons[reward.icon_key] ? reward.icon_key : 'gift')
     setBusy(false); setError('')
   }, [visible, reward])
 
@@ -425,11 +435,12 @@ function RewardEditorSheet({ visible, familyId, reward, onSaved, onDismiss }) {
     if (busy) return
     let normalized
     try { normalized = normalizeRewardDraft(name, starCost) } catch (problem) { setError(problem.message); return }
+    if (!rewardIcons[iconKey]) { setError('Choose a reward picture.'); return }
     setBusy(true); setError('')
     try {
       const result = reward
-        ? await supabase.from('rewards').update({ name: normalized.name, star_cost: normalized.starCost }).eq('id', reward.id)
-        : await supabase.from('rewards').insert({ family_id: familyId, name: normalized.name, star_cost: normalized.starCost })
+        ? await supabase.from('rewards').update({ name: normalized.name, star_cost: normalized.starCost, icon_key: iconKey }).eq('id', reward.id)
+        : await supabase.from('rewards').insert({ family_id: familyId, name: normalized.name, star_cost: normalized.starCost, icon_key: iconKey })
       if (result.error) throw result.error
       await onSaved()
     } catch (problem) { setError(friendlyError(problem, 'Could not save this reward. Please try again.')) } finally { setBusy(false) }
@@ -438,6 +449,8 @@ function RewardEditorSheet({ visible, familyId, reward, onSaved, onDismiss }) {
   return <DraggableBottomSheet visible={visible} title={reward ? 'Edit reward' : 'Add reward'} onDismiss={onDismiss}>
     <Text style={styles.body}>Reward name</Text>
     <TextInput accessibilityLabel="Reward name" autoCapitalize="sentences" maxLength={80} placeholder="Movie night" value={name} onChangeText={setName} style={styles.input} />
+    <Text style={styles.body}>Reward picture</Text>
+    <View style={styles.rewardIconPicker}>{rewardIconOptions.map(([key, emoji, label]) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: iconKey === key }} onPress={() => setIconKey(key)} style={[styles.rewardIconChoice, iconKey === key && styles.rewardIconChoiceSelected]}><Text style={styles.rewardIconChoiceText}>{emoji}</Text></Pressable>)}</View>
     <Text style={styles.body}>How many stars?</Text>
     <TextInput accessibilityLabel="Reward star cost" keyboardType="number-pad" maxLength={5} placeholder="10" value={starCost} onChangeText={setStarCost} style={styles.input} />
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
@@ -463,13 +476,13 @@ function ManageRewardsSheet({ visible, rewards, familyId, onAdd, onEdit, onRefre
   async function addStarters() {
     setBusyId('starters'); setError('')
     try {
-      const result = await supabase.from('rewards').insert(starterRewards.map((reward) => ({ family_id: familyId, name: reward.name, star_cost: reward.starCost })))
+      const result = await supabase.from('rewards').insert(starterRewards.map((reward) => ({ family_id: familyId, name: reward.name, star_cost: reward.starCost, icon_key: reward.iconKey })))
       if (result.error) throw result.error
       await onRefresh()
     } catch (problem) { setError(friendlyError(problem, 'Could not add starter rewards. Please try again.')) } finally { setBusyId(null) }
   }
 
-  const rewardRow = (reward, archived) => <View key={reward.id} style={[styles.manageRewardRow, archived && styles.manageRewardRowArchived]}><Text style={styles.manageRewardEmoji}>{rewardPresentation(reward.name).emoji}</Text><View style={styles.manageRewardDetails}><Text numberOfLines={2} style={styles.manageRewardName}>{reward.name}</Text><Text style={styles.manageRewardMeta}>{reward.star_cost} stars{archived ? ' · Archived' : ''}</Text></View><View><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => onEdit(reward)}><Text>Edit</Text></Pressable><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => setArchived(reward, !archived)}><Text style={archived ? styles.restoreText : styles.deleteText}>{busyId === reward.id ? 'Saving…' : archived ? 'Restore' : 'Archive'}</Text></Pressable></View></View>
+  const rewardRow = (reward, archived) => <View key={reward.id} style={[styles.manageRewardRow, archived && styles.manageRewardRowArchived]}><Text style={styles.manageRewardEmoji}>{rewardPresentation(reward).emoji}</Text><View style={styles.manageRewardDetails}><Text numberOfLines={2} style={styles.manageRewardName}>{reward.name}</Text><Text style={styles.manageRewardMeta}>{reward.star_cost} stars{archived ? ' · Archived' : ''}</Text></View><View><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => onEdit(reward)}><Text>Edit</Text></Pressable><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => setArchived(reward, !archived)}><Text style={archived ? styles.restoreText : styles.deleteText}>{busyId === reward.id ? 'Saving…' : archived ? 'Restore' : 'Archive'}</Text></Pressable></View></View>
 
   return <DraggableBottomSheet visible={visible} title="Manage rewards" onDismiss={onDismiss}>
     <Pressable accessibilityRole="button" style={styles.primary} disabled={Boolean(busyId)} onPress={onAdd}><Text style={styles.primaryText}>Add reward</Text></Pressable>
@@ -823,7 +836,7 @@ function Home({ data, refresh, onSignOut, loadError }) {
 })}</View>{!activeMissions.length ? <View style={styles.empty}><Text style={styles.parentSectionTitle}>Ready to get started?</Text><Text style={styles.body}>Add a mission in Parent Controls.</Text></View> : null}</ScrollView></View><View style={[styles.homeFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}><View style={styles.encouragement}><Text style={styles.encouragementText}>You’re doing amazing!</Text><Text style={styles.encouragementHeart}>{'♥'}</Text></View></View></> : <View style={styles.empty}><Text style={styles.sheetTitle}>Set up a child profile</Text><Text style={styles.body}>This household does not have an active child profile yet.</Text><Pressable accessibilityRole="button" style={styles.secondary} onPress={refresh}><Text>Try again</Text></Pressable></View>}
     </View>
     <Celebration visible={celebrating} balanceTarget={balanceTarget} run={celebrationRun} onFinish={finishCelebration} />
-    <ParentControlsSheet visible={settingsOpen} family={data?.family} members={data?.members} children={children} currentUserId={data?.userId} isOwner={data?.membership?.role === 'owner'} onInvite={() => setInviteOpen(true)} onManageChildren={() => { setChildrenSheetMode('manage'); setChildrenOpen(true) }} onManageMissions={() => setManageMissionsOpen(true)} onAddMission={() => setEditingMission({})} onManageRewards={() => setManageRewardsOpen(true)} onReview={() => setReviewOpen(true)} onSignOut={onSignOut} onDismiss={() => setSettingsOpen(false)} />
+    <ParentControlsSheet visible={settingsOpen} family={data?.family} members={data?.members} children={children} currentUserId={data?.userId} isOwner={data?.membership?.role === 'owner'} onInvite={() => setInviteOpen(true)} onManageChildren={() => { setChildrenSheetMode('manage'); setChildrenOpen(true) }} onManageMissions={() => setManageMissionsOpen(true)} onManageRewards={() => setManageRewardsOpen(true)} onReview={() => setReviewOpen(true)} onSignOut={onSignOut} onDismiss={() => setSettingsOpen(false)} />
     <ChildrenSheet visible={childrenOpen} children={children} selectedChildId={child?.id} showAdd={childrenSheetMode === 'manage'} onSelect={setSelectedChildId} onAdd={() => setAddChildOpen(true)} onDismiss={() => setChildrenOpen(false)} />
     <AddChildSheet visible={addChildOpen} familyId={data?.family?.id} onSaved={async (newChild) => { const result = await refresh(); setSelectedChildId(newChild.id); setAddChildOpen(false); setChildrenOpen(false); if (!result.ok) setError('Child added. Refresh to view their stars.'); return true }} onDismiss={() => setAddChildOpen(false)} />
     <InviteParentSheet visible={inviteOpen} familyId={data?.family?.id} onDismiss={() => setInviteOpen(false)} />
@@ -858,7 +871,7 @@ function AppContent() {
       if (!memberships.length) throw new Error('This account does not belong to a family yet.')
       if (memberships.length > 1) throw new Error('This account has more than one active household. Please finish household setup in the web app.')
       const familyId = memberships[0].family_id
-      const [family, children, missions, rewards, balances, completions, redemptions, members] = await Promise.all([supabase.from('families').select('id, name, time_zone').eq('id', familyId).single(), supabase.from('children').select('id, name, selected_reward_id, archived_at').eq('family_id', familyId).is('archived_at', null).order('created_at'), supabase.from('missions').select('id, family_id, category_id, name, icon_key, stars, frequency, repeat_cooldown_seconds, archived_at, created_at, sort_order').eq('family_id', familyId).order('sort_order').order('created_at').order('id'), supabase.from('rewards').select('id, name, star_cost, archived_at').eq('family_id', familyId).order('created_at'), supabase.from('child_star_balances').select('child_id, balance').eq('family_id', familyId), supabase.from('mission_completions').select('id, request_id, child_id, mission_id, completed_at, completed_on, frequency_snapshot, undone_at').eq('family_id', familyId).order('completed_at', { ascending: false }), supabase.from('reward_redemptions').select('id, request_id, child_id, redeemed_at, stars_spent').eq('family_id', familyId).order('redeemed_at', { ascending: false }), supabase.from('family_memberships').select('parent_id, role, left_at').eq('family_id', familyId).is('left_at', null).order('joined_at')])
+      const [family, children, missions, rewards, balances, completions, redemptions, members] = await Promise.all([supabase.from('families').select('id, name, time_zone').eq('id', familyId).single(), supabase.from('children').select('id, name, selected_reward_id, archived_at').eq('family_id', familyId).is('archived_at', null).order('created_at'), supabase.from('missions').select('id, family_id, category_id, name, icon_key, stars, frequency, repeat_cooldown_seconds, archived_at, created_at, sort_order').eq('family_id', familyId).order('sort_order').order('created_at').order('id'), supabase.from('rewards').select('id, name, star_cost, icon_key, archived_at').eq('family_id', familyId).order('created_at'), supabase.from('child_star_balances').select('child_id, balance').eq('family_id', familyId), supabase.from('mission_completions').select('id, request_id, child_id, mission_id, completed_at, completed_on, frequency_snapshot, undone_at').eq('family_id', familyId).order('completed_at', { ascending: false }), supabase.from('reward_redemptions').select('id, request_id, child_id, redeemed_at, stars_spent').eq('family_id', familyId).order('redeemed_at', { ascending: false }), supabase.from('family_memberships').select('parent_id, role, left_at').eq('family_id', familyId).is('left_at', null).order('joined_at')])
       const familyData = unwrap(family)
       if (!familyData) throw new Error('Your household could not be loaded. Please try again.')
       setState({ loading: false, error: '', data: { family: familyData, membership: memberships[0], members: unwrap(members) || [], userId: user.id, children: unwrap(children) || [], missions: unwrap(missions) || [], rewards: unwrap(rewards) || [], balances: unwrap(balances) || [], completions: unwrap(completions) || [], redemptions: unwrap(redemptions) || [], email: session?.user.email || '' } })
@@ -998,7 +1011,7 @@ const styles = StyleSheet.create({
   bottomSheetRoot: { flex: 1, justifyContent: 'flex-end' }, bottomSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0B2F5766' }, bottomSheetDismissArea: { ...StyleSheet.absoluteFillObject }, parentSheet: { width: '100%', maxWidth: 600, alignSelf: 'center', maxHeight: '84%', backgroundColor: '#FFFDF9', borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: '#BFD9EA', borderBottomWidth: 0, overflow: 'visible', shadowColor: '#0B2F57', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: -4 }, elevation: 12 }, sheetDragZone: { alignSelf: 'stretch', minHeight: 104, paddingTop: 10, paddingBottom: 14, alignItems: 'center', justifyContent: 'center', gap: 10 }, sheetHandle: { width: 48, height: 6, borderRadius: 3, backgroundColor: '#547796', opacity: 1, elevation: 2 }, parentSheetScroll: { flexShrink: 1 }, parentSheetContent: { paddingHorizontal: 18, gap: 14 },
   parentSectionTitle: { color: '#0E3A66', fontSize: 18, fontWeight: '800' }, parentHouseholdName: { color: '#123A63', fontSize: 16, fontWeight: '600' }, parentMemberLabel: { marginTop: 4, color: '#456888', fontSize: 13, fontWeight: '700' }, parentMember: { color: '#123A63', fontSize: 15 }, inviteSuccess: { padding: 12, borderRadius: 12, backgroundColor: '#E2F8EE', color: '#0E3A66', lineHeight: 20 },
   childChoice: { padding: 14, borderRadius: 16, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA', gap: 3 }, childChoiceSelected: { backgroundColor: '#FFF7D6', borderColor: '#F1D778', borderWidth: 2 }, childChoiceName: { color: '#123A63', fontSize: 17, fontWeight: '800' }, childChoiceStatus: { color: '#456888', fontSize: 13 },
-  iconPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, iconChoice: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA' }, iconChoiceSelected: { backgroundColor: '#FFF7D6', borderColor: '#F1D778', borderWidth: 2 }, iconChoiceText: { fontSize: 25 }, cooldownPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, cooldownChoice: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 14, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA' }, cooldownChoiceSelected: { backgroundColor: '#AEEFD7', borderColor: '#76CFF5' }, cooldownChoiceText: { color: '#123A63', fontSize: 12, fontWeight: '700' }, manageMissionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 16, backgroundColor: '#EAF1F7' }, manageMissionIcon: { fontSize: 28 }, manageMissionDetails: { flex: 1, minWidth: 0 }, manageMissionName: { color: '#123A63', fontSize: 15, fontWeight: '800' }, manageMissionMeta: { marginTop: 2, color: '#456888', fontSize: 12 }, smallAction: { minHeight: 28, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 9, borderRadius: 14, backgroundColor: '#FFFFFF', marginVertical: 2 },
+  iconPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, rewardIconPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, iconChoice: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA' }, iconChoiceSelected: { backgroundColor: '#FFF7D6', borderColor: '#F1D778', borderWidth: 2 }, iconChoiceText: { fontSize: 25 }, rewardIconChoice: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA' }, rewardIconChoiceSelected: { backgroundColor: '#FFF7D6', borderColor: '#F1D778', borderWidth: 2 }, rewardIconChoiceText: { fontSize: 27 }, cooldownPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, cooldownChoice: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 14, backgroundColor: '#EAF1F7', borderWidth: 1, borderColor: '#BFD9EA' }, cooldownChoiceSelected: { backgroundColor: '#AEEFD7', borderColor: '#76CFF5' }, cooldownChoiceText: { color: '#123A63', fontSize: 12, fontWeight: '700' }, manageMissionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 16, backgroundColor: '#EAF1F7' }, manageMissionIcon: { fontSize: 28 }, manageMissionDetails: { flex: 1, minWidth: 0 }, manageMissionName: { color: '#123A63', fontSize: 15, fontWeight: '800' }, manageMissionMeta: { marginTop: 2, color: '#456888', fontSize: 12 }, smallAction: { minHeight: 28, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 9, borderRadius: 14, backgroundColor: '#FFFFFF', marginVertical: 2 },
   rewardsScreen: { flex: 1, backgroundColor: '#D9F1FF' },
   rewardsHeader: { width: '100%', maxWidth: 600, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 16 },
   rewardsHeaderCompact: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 10 }, rewardsHeaderTight: { gap: 6, paddingHorizontal: 10, paddingTop: 5, paddingBottom: 6 },
