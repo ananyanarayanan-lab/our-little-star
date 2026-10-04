@@ -462,15 +462,15 @@ function ManageRewardsSheet({ visible, rewards, familyId, onAdd, onEdit, onRefre
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
   const activeRewards = (rewards || []).filter((reward) => !reward.archived_at)
-  const archivedRewards = (rewards || []).filter((reward) => reward.archived_at)
 
-  async function setArchived(reward, archived) {
+  async function deleteReward(reward) {
     setBusyId(reward.id); setError('')
     try {
-      const result = await supabase.from('rewards').update({ archived_at: archived ? new Date().toISOString() : null }).eq('id', reward.id)
+      // Keep the ledger intact: this is a soft delete, so old redemptions remain auditable.
+      const result = await supabase.from('rewards').update({ archived_at: new Date().toISOString() }).eq('id', reward.id)
       if (result.error) throw result.error
       await onRefresh()
-    } catch (problem) { setError(friendlyError(problem, 'Could not update this reward. Please try again.')) } finally { setBusyId(null) }
+    } catch (problem) { setError(friendlyError(problem, 'Could not delete this reward. Please try again.')) } finally { setBusyId(null) }
   }
 
   async function addStarters() {
@@ -482,16 +482,14 @@ function ManageRewardsSheet({ visible, rewards, familyId, onAdd, onEdit, onRefre
     } catch (problem) { setError(friendlyError(problem, 'Could not add starter rewards. Please try again.')) } finally { setBusyId(null) }
   }
 
-  const rewardRow = (reward, archived) => <View key={reward.id} style={[styles.manageRewardRow, archived && styles.manageRewardRowArchived]}><Text style={styles.manageRewardEmoji}>{rewardPresentation(reward).emoji}</Text><View style={styles.manageRewardDetails}><Text numberOfLines={2} style={styles.manageRewardName}>{reward.name}</Text><Text style={styles.manageRewardMeta}>{reward.star_cost} stars{archived ? ' · Archived' : ''}</Text></View><View><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => onEdit(reward)}><Text>Edit</Text></Pressable><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => setArchived(reward, !archived)}><Text style={archived ? styles.restoreText : styles.deleteText}>{busyId === reward.id ? 'Saving…' : archived ? 'Restore' : 'Archive'}</Text></Pressable></View></View>
+  const rewardRow = (reward) => <View key={reward.id} style={styles.manageRewardRow}><Text style={styles.manageRewardEmoji}>{rewardPresentation(reward).emoji}</Text><View style={styles.manageRewardDetails}><Text numberOfLines={2} style={styles.manageRewardName}>{reward.name}</Text><Text style={styles.manageRewardMeta}>{reward.star_cost} stars</Text></View><View><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => onEdit(reward)}><Text>Edit</Text></Pressable><Pressable accessibilityRole="button" disabled={Boolean(busyId)} style={styles.smallAction} onPress={() => deleteReward(reward)}><Text style={styles.deleteText}>{busyId === reward.id ? 'Deleting…' : 'Delete'}</Text></Pressable></View></View>
 
   return <DraggableBottomSheet visible={visible} title="Manage rewards" onDismiss={onDismiss}>
     <Pressable accessibilityRole="button" style={styles.primary} disabled={Boolean(busyId)} onPress={onAdd}><Text style={styles.primaryText}>Add reward</Text></Pressable>
-    {!activeRewards.length && !archivedRewards.length ? <Pressable accessibilityRole="button" style={styles.secondary} disabled={Boolean(busyId)} onPress={addStarters}><Text>{busyId === 'starters' ? 'Adding…' : 'Add starter rewards'}</Text></Pressable> : null}
+    {!activeRewards.length ? <Pressable accessibilityRole="button" style={styles.secondary} disabled={Boolean(busyId)} onPress={addStarters}><Text>{busyId === 'starters' ? 'Adding…' : 'Add starter rewards'}</Text></Pressable> : null}
     <Text style={styles.body}>Choose the rewards your child can work toward and how many stars each one needs.</Text>
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-    {activeRewards.map((reward) => rewardRow(reward, false))}
-    {!activeRewards.length && archivedRewards.length ? <Text style={styles.body}>No active rewards yet. Restore one or add a new reward.</Text> : null}
-    {archivedRewards.length ? <><Text style={styles.parentMemberLabel}>Archived rewards</Text>{archivedRewards.map((reward) => rewardRow(reward, true))}</> : null}
+    {activeRewards.map(rewardRow)}
   </DraggableBottomSheet>
 }
 

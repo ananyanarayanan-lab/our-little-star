@@ -38,7 +38,10 @@ test('reward icon keys are constrained, persisted, and loaded without storing as
 
 test('mobile rewards use configured database rows, retain history through archive, and never create a reward while redeeming', () => {
   assert.match(source, /function ManageRewardsSheet/)
-  assert.ok(source.includes('update({ archived_at: archived ? new Date().toISOString() : null })'))
+  assert.ok(source.includes("function deleteReward(reward)"))
+  assert.ok(source.includes("update({ archived_at: new Date().toISOString() })"))
+  assert.ok(source.includes("'Delete'"))
+  assert.doesNotMatch(source.slice(source.indexOf('function ManageRewardsSheet'), source.indexOf('function MissionEditorSheet')), /Archived rewards|Restore|Archive/)
   assert.ok(source.includes('const activeRewards = (rewards || []).filter((reward) => !reward.archived_at).map(rewardDisplay)'))
   const redemption = source.slice(source.indexOf('async function confirmRedemption'), source.indexOf('  const balanceRef'))
   assert.doesNotMatch(redemption, /from\('rewards'\)\.insert/)
